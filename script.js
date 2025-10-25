@@ -3,6 +3,7 @@ import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@m
 let video, faceLandmarker, baselineNoseY = null, jumpCooldown = false;
 let canvas, ctx, player, ground, obstacles, gaps, score, gameOver, lastFrameTime;
 let action = "😐 Idle";
+
 const GRAVITY = 0.6;
 const JUMP_FORCE = -10;
 const SCROLL_SPEED = 3;
@@ -14,7 +15,19 @@ async function init() {
   video = document.getElementById("webcam");
   const stream = await navigator.mediaDevices.getUserMedia({ video: true });
   video.srcObject = stream;
-  await new Promise(r => video.onloadedmetadata = r);
+
+  // Wait for valid video size
+  await new Promise(r => {
+    video.onloadedmetadata = () => {
+      video.play();
+      const checkVideo = setInterval(() => {
+        if (video.videoWidth > 0 && video.videoHeight > 0) {
+          clearInterval(checkVideo);
+          r();
+        }
+      }, 100);
+    };
+  });
 
   const resolver = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.9/wasm"
@@ -41,8 +54,10 @@ function resetGame() {
   gaps = [];
   score = 0;
   gameOver = false;
-  document.getElementById("tryAgain").style.display = "none";
+  baselineNoseY = null;
+  jumpCooldown = false;
   lastFrameTime = performance.now();
+  document.getElementById("tryAgain").style.display = "none";
 }
 
 function jump() {
@@ -70,11 +85,14 @@ async function detectLoop() {
     const nose = landmarks[1];
     const upperLip = landmarks[13];
     const lowerLip = landmarks[14];
-    const mouthOpen = (lowerLip.y - upperLip.y) > 0.03;
+
+    const mouthOpenAmount = lowerLip.y - upperLip.y;
+    const mouthOpen = mouthOpenAmount > 0.03;
 
     if (!baselineNoseY) baselineNoseY = nose.y;
-    const noseRise = baselineNoseY - nose.y; // Positive when head tilts back
+    const noseRise = baselineNoseY - nose.y;
 
+    // Update action
     if (mouthOpen) {
       action = "🛡️ Shield Up!";
     } else if (noseRise > 0.02 && !jumpCooldown) {
@@ -86,7 +104,15 @@ async function detectLoop() {
       action = "😐 Idle";
     }
 
-    document.getElementById("status").textContent = action;
+    // --- Live debug panel ---
+    const debug = document.getElementById("debug");
+    debug.innerHTML = `
+      Nose Y: ${nose.y.toFixed(3)}<br>
+      Baseline Nose Y: ${baselineNoseY.toFixed(3)}<br>
+      Nose Rise: ${noseRise.toFixed(3)}<br>
+      Mouth Open: ${mouthOpenAmount.toFixed(3)}<br>
+      Jump Cooldown: ${jumpCooldown}
+    `;
   }
 
   if (!gameOver) requestAnimationFrame(detectLoop);
@@ -103,7 +129,7 @@ function gameLoop(timestamp) {
 }
 
 function updateGame(dt) {
-  // Add gravity
+  // Gravity
   player.vy += GRAVITY;
   player.y += player.vy;
   if (player.y >= ground - player.h) {
@@ -119,43 +145,44 @@ function updateGame(dt) {
   obstacles.forEach(o => o.x -= SCROLL_SPEED);
   gaps.forEach(g => g.x -= SCROLL_SPEED);
 
-  // Collision & falling into gaps
+  // Collision
   for (const o of obstacles) {
     if (player.x < o.x + o.w && player.x + player.w > o.x && player.y + player.h > o.y) {
       endGame();
     }
   }
 
+  // Fall into gap
   const inGap = gaps.some(g => player.x + player.w > g.x && player.x < g.x + g.w);
   if (inGap && player.onGround) {
     endGame();
   }
 
-  // Remove old items
   obstacles = obstacles.filter(o => o.x + o.w > 0);
   gaps = gaps.filter(g => g.x + g.w > 0);
 
-  score += dt * 10; // Increase score by time
+  score += dt * 10;
   document.getElementById("status").textContent = `${action} | Score: ${Math.floor(score)}`;
 }
 
 function drawGame() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  // Draw ground
+
+  // Ground
   ctx.fillStyle = "#555";
   ctx.fillRect(0, ground, canvas.width, 40);
 
-  // Draw player
+  // Player
   ctx.fillStyle = "#0f0";
   ctx.fillRect(player.x, player.y, player.w, player.h);
 
-  // Draw obstacles
+  // Obstacles
   ctx.fillStyle = "#f00";
-  for (const o of obstacles) ctx.fillRect(o.x, o.y, o.w, o.h);
+  obstacles.forEach(o => ctx.fillRect(o.x, o.y, o.w, o.h));
 
-  // Draw gaps (as black holes)
+  // Gaps (draw as black holes)
   ctx.fillStyle = "#111";
-  for (const g of gaps) ctx.fillRect(g.x, ground, g.w, 40);
+  gaps.forEach(g => ctx.fillRect(g.x, ground, g.w, 40));
 }
 
 init();
