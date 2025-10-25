@@ -37,7 +37,7 @@ async function init() {
     baseOptions: {
       modelAssetPath: "https://storage.googleapis.com/mediapipe-assets/face_landmarker.task"
     },
-    outputFaceBlendshapes: true,
+    outputFaceBlendshapes: false,
     runningMode: "VIDEO",
     numFaces: 1
   });
