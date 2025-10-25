@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Face-Controlled Side Scroller</title>
+  <script type="module">
+    import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.9";
+
+    // === GAME VARIABLES ===
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    document.body.appendChild(canvas);
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight * 0.6;
+
+    let player, gravity, floorY, scrollSpeed, obstacles, gameTime, score, running, jumpCooldown;
+
+    function resetGame() {
+      player = { x: 50, y: canvas.height - 60, width: 40, height: 40, vy: 0, onGround: true };
+      gravity = 0.6;
+      floorY = canvas.height - 20;
+      scrollSpeed = 4;
+      obstacles = [];
+      gameTime = 0;
+      score = 0;
+      running = true;
+      jumpCooldown = 0;
+      document.getElementById("game-over").style.display = "none";
+      requestAnimationFrame(gameLoop);
+    }
+
+    // === FACE TRACKING ===
+    let video = null;
+    let faceLandmarker = null;
+    let runningMode = "VIDEO";
+
+    async function initFaceTracking() {
+      const filesetResolver = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.9/wasm"
+      );
+      faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-assets/face_landmarker.task",
+        },
+        runningMode,
+        numFaces: 1,
+      });
+
+      video = document.createElement("video");
+      video.autoplay = true;
+      video.playsInline = true;
+      video.muted = true;
+      video.style.display = "none";
+      document.body.appendChild(video);
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+
+      await new Promise((res) => (video.onloadedmetadata = res));
+      detectLoop();
+      resetGame();
+    }
+
+    async function detectLoop() {
+      if (!faceLandmarker) return;
+      const results = await faceLandmarker.detectForVideo(video, performance.now());
+
+      if (results.faceLandmarks && results.faceLandmarks.length > 0) {
+        const lm = results.faceLandmarks[0];
+        const pitch = lm[10].y - lm[152].y; // rough head tilt measure
+
+        // Jump trigger (tilt head upward)
+        if (pitch < -0.02 && jumpCooldown <= 0 && player.onGround && running) {
+          player.vy = -12;
+          player.onGround = false;
+          jumpCooldown = 30; // small cooldown between jumps
+        }
+      }
+
+      jumpCooldown = Math.max(0, jumpCooldown - 1);
+      requestAnimationFrame(detectLoop);
+    }
+
+    // === GAME LOOP ===
+    function gameLoop() {
+      if (!running) return;
+
+      gameTime++;
+      score += 0.05; // Increase score over time
+
+      // Add obstacles randomly
+      if (gameTime % 90 === 0) {
+        if (Math.random() < 0.5) {
+          // gap
+          obstacles.push({ type: "gap", x: canvas.width, width: 80, height: 20 });
+        } else {
+          // block
+          const h = 40 + Math.random() * 40;
+          obstacles.push({ type: "block", x: canvas.width, width: 40, height: h });
+        }
+      }
+
+      // Move obstacles
+      for (let obs of obstacles) obs.x -= scrollSpeed;
+      obstacles = obstacles.filter((obs) => obs.x + obs.width > 0);
+
+      // Physics
+      player.vy += gravity;
+      player.y += player.vy;
+      if (player.y + player.height >= floorY) {
+        player.y = floorY - player.height;
+        player.vy = 0;
+        player.onGround = true;
+      }
+
+      // Check for gaps
+      let onFloor = true;
+      for (let obs of obstacles) {
+        if (obs.type === "gap" && player.x + player.width > obs.x && player.x < obs.x + obs.width) {
+          if (player.y + player.height >= floorY) onFloor = false;
+        }
+      }
+      if (!onFloor && player.onGround) {
+        player.onGround = false;
+      }
+
+      // Collision with blocks
+      for (let obs of obstacles) {
+        if (
+          obs.type === "block" &&
+          player.x + player.width > obs.x &&
+          player.x < obs.x + obs.width &&
+          player.y + player.height > floorY - obs.height
+        ) {
+          endGame();
+          return;
+        }
+      }
+
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    function draw() {
+      ctx.fillStyle = "#111";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // floor
+      ctx.fillStyle = "#444";
+      ctx.fillRect(0, floorY, canvas.width, 20);
+
+      // obstacles
+      ctx.fillStyle = "#888";
+      for (let obs of obstacles) {
+        if (obs.type === "gap") continue; // gaps are empty
+        ctx.fillRect(obs.x, floorY - obs.height, obs.width, obs.height);
+      }
+
+      // player
+      ctx.fillStyle = "#4af";
+      ctx.fillRect(player.x, player.y, player.width, player.height);
+
+      // score
+      ctx.fillStyle = "#fff";
+      ctx.font = "20px sans-serif";
+      ctx.fillText("Score: " + Math.floor(score), 20, 30);
+    }
+
+    function endGame() {
+      running = false;
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#fff";
+      ctx.font = "30px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("💀 Game Over 💀", canvas.width / 2, canvas.height / 2);
+      ctx.fillText("Score: " + Math.floor(score), canvas.width / 2, canvas.height / 2 + 40);
+
+      // Show Try Again button
+      const btn = document.getElementById("game-over");
+      btn.style.display = "block";
+    }
+
+    document.getElementById("try-again").addEventListener("click", resetGame);
+
+    initFaceTracking();
+  </script>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      color: white;
+      font-family: sans-serif;
+      text-align: center;
+      overflow: hidden;
+    }
+    #game-over {
+      display: none;
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+    }
+    #try-again {
+      margin-top: 20px;
+      padding: 10px 20px;
+      background: #4af;
+      border: none;
+      border-radius: 6px;
+      font-size: 18px;
+      cursor: pointer;
+      color: white;
+    }
+    #try-again:hover {
+      background: #66f;
+    }
+  </style>
+</head>
+<body>
+  <h2>🕹️ Face-Controlled Side Scroller</h2>
+  <p>Tip your head up to jump!</p>
+
+  <div id="game-over">
+    <h2>💀 Game Over 💀</h2>
+    <button id="try-again">Try Again</button>
+  </div>
+</body>
+</html>
