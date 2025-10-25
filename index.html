@@ -1,57 +1,57 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Face-Controlled Side Scroller</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: sans-serif;
-      background: #111;
-      color: #eee;
-      text-align: center;
-      overflow: hidden;
-    }
-    #gameCanvas {
-      display: block;
-      margin: 0 auto;
-      background: #222;
-      border-radius: 10px;
-    }
-    #status {
-      font-size: 1.2em;
-      margin: 5px;
-    }
-    #debug {
-      font-size: 0.9em;
-      text-align: left;
-      margin: 5px auto;
-      background: #222;
-      padding: 5px 10px;
-      border-radius: 6px;
-      width: 300px;
-    }
-    #tryAgain {
-      display: none;
-      font-size: 1.2em;
-      background: #28a;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      padding: 10px 20px;
-      margin-top: 10px;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Face-Controlled Side Scroller</title>
+<style>
+body {
+  margin: 0;
+  font-family: sans-serif;
+  background: #111;
+  color: #eee;
+  text-align: center;
+  overflow: hidden;
+}
+#gameCanvas {
+  display: block;
+  margin: 0 auto;
+  background: #222;
+  border-radius: 10px;
+}
+#status {
+  font-size: 1.2em;
+  margin: 5px;
+}
+#debug {
+  font-size: 0.9em;
+  text-align: left;
+  margin: 5px auto;
+  background: #222;
+  padding: 5px 10px;
+  border-radius: 6px;
+  width: 300px;
+}
+#tryAgain {
+  display: none;
+  font-size: 1.2em;
+  background: #28a;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  margin-top: 10px;
+}
+</style>
 </head>
 <body>
-  <h2>🎮 Face-Controlled Side Scroller</h2>
-  <video id="webcam" autoplay playsinline muted style="display:none;"></video>
-  <canvas id="gameCanvas" width="400" height="300"></canvas>
-  <div id="status">Loading model...</div>
-  <div id="debug">Debug info will appear here</div>
-  <button id="tryAgain">Try Again</button>
+<h2>🎮 Face-Controlled Side Scroller</h2>
+<video id="webcam" autoplay playsinline muted style="display:none;"></video>
+<canvas id="gameCanvas" width="400" height="300"></canvas>
+<div id="status">Loading model...</div>
+<div id="debug">Debug info will appear here</div>
+<button id="tryAgain">Try Again</button>
 
-  <script type="module" src="script.js"></script>
+<script type="module" src="script.js"></script>
 </body>
 </html>

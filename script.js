@@ -7,6 +7,10 @@ let action = "😐 Idle";
 const GRAVITY = 0.6;
 const JUMP_FORCE = -10;
 const SCROLL_SPEED = 3;
+const SHIELD_DURATION = 3.0; // seconds
+
+let shieldTimeLeft = 0;
+let shieldActive = false;
 
 async function init() {
   canvas = document.getElementById("gameCanvas");
@@ -16,7 +20,6 @@ async function init() {
   const stream = await navigator.mediaDevices.getUserMedia({ video: true });
   video.srcObject = stream;
 
-  // Wait for valid video size
   await new Promise(r => {
     video.onloadedmetadata = () => {
       video.play();
@@ -56,8 +59,11 @@ function resetGame() {
   gameOver = false;
   baselineNoseY = null;
   jumpCooldown = false;
+  shieldTimeLeft = 0;
+  shieldActive = false;
   lastFrameTime = performance.now();
   document.getElementById("tryAgain").style.display = "none";
+  action = "😐 Idle";
 }
 
 function jump() {
@@ -75,9 +81,13 @@ function endGame() {
 
 document.getElementById("tryAgain").addEventListener("click", () => {
   resetGame();
+  detectLoop();  // restart face detection
+  gameLoop();    // restart game loop
 });
 
 async function detectLoop() {
+  if (!faceLandmarker) return;
+
   const results = await faceLandmarker.detectForVideo(video, performance.now());
 
   if (results.faceLandmarks && results.faceLandmarks.length > 0) {
@@ -92,25 +102,28 @@ async function detectLoop() {
     if (!baselineNoseY) baselineNoseY = nose.y;
     const noseRise = baselineNoseY - nose.y;
 
-    // Update action
+    // Shield
     if (mouthOpen) {
+      shieldActive = true;
+      shieldTimeLeft = SHIELD_DURATION;
       action = "🛡️ Shield Up!";
-    } else if (noseRise > 0.02 && !jumpCooldown) {
-      action = "🦘 Jump!";
+    }
+
+    // Jump
+    if (noseRise > 0.02 && !jumpCooldown) {
       jump();
       jumpCooldown = true;
       setTimeout(() => (jumpCooldown = false), 800);
-    } else {
-      action = "😐 Idle";
+      if (!shieldActive) action = "🦘 Jump!";
     }
 
-    // --- Live debug panel ---
-    const debug = document.getElementById("debug");
-    debug.innerHTML = `
+    // Debug panel
+    document.getElementById("debug").innerHTML = `
       Nose Y: ${nose.y.toFixed(3)}<br>
       Baseline Nose Y: ${baselineNoseY.toFixed(3)}<br>
       Nose Rise: ${noseRise.toFixed(3)}<br>
       Mouth Open: ${mouthOpenAmount.toFixed(3)}<br>
+      Shield Active: ${shieldActive}<br>
       Jump Cooldown: ${jumpCooldown}
     `;
   }
@@ -129,6 +142,15 @@ function gameLoop(timestamp) {
 }
 
 function updateGame(dt) {
+  // Update shield
+  if (shieldActive) {
+    shieldTimeLeft -= dt;
+    if (shieldTimeLeft <= 0) {
+      shieldActive = false;
+      shieldTimeLeft = 0;
+    }
+  }
+
   // Gravity
   player.vy += GRAVITY;
   player.y += player.vy;
@@ -145,18 +167,29 @@ function updateGame(dt) {
   obstacles.forEach(o => o.x -= SCROLL_SPEED);
   gaps.forEach(g => g.x -= SCROLL_SPEED);
 
-  // Collision
-  for (const o of obstacles) {
-    if (player.x < o.x + o.w && player.x + player.w > o.x && player.y + player.h > o.y) {
-      endGame();
+  // Collision: only if shield inactive
+  if (!shieldActive) {
+    for (const o of obstacles) {
+      if (player.x < o.x + o.w && player.x + player.w > o.x && player.y + player.h > o.y) {
+        endGame();
+      }
     }
   }
 
-  // Fall into gap
-  const inGap = gaps.some(g => player.x + player.w > g.x && player.x < g.x + g.w);
-  if (inGap && player.onGround) {
-    endGame();
+  // Gap logic: survive if any part on ground
+  let fullyOverGap = false;
+  for (const g of gaps) {
+    if (player.x + player.w > g.x && player.x < g.x + g.w) {
+      const playerBottom = player.y + player.h;
+      if (playerBottom >= ground) {
+        fullyOverGap = false; // partially on ground
+        break;
+      } else {
+        fullyOverGap = true; // fully above gap
+      }
+    }
   }
+  if (fullyOverGap) endGame();
 
   obstacles = obstacles.filter(o => o.x + o.w > 0);
   gaps = gaps.filter(g => g.x + g.w > 0);
@@ -176,11 +209,18 @@ function drawGame() {
   ctx.fillStyle = "#0f0";
   ctx.fillRect(player.x, player.y, player.w, player.h);
 
+  // Shield bar above player
+  if (shieldActive) {
+    ctx.fillStyle = "#0ff";
+    const barWidth = (player.w) * (shieldTimeLeft / SHIELD_DURATION);
+    ctx.fillRect(player.x, player.y - 8, barWidth, 5);
+  }
+
   // Obstacles
   ctx.fillStyle = "#f00";
   obstacles.forEach(o => ctx.fillRect(o.x, o.y, o.w, o.h));
 
-  // Gaps (draw as black holes)
+  // Gaps
   ctx.fillStyle = "#111";
   gaps.forEach(g => ctx.fillRect(g.x, ground, g.w, 40));
 }
