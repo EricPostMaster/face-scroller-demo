@@ -26,6 +26,8 @@ let video, faceLandmarker;
 let baselineNoseY = null;
 let wasMouthOpen = false;
 let jumpCooldown = false;
+// Debug invincibility flag
+let debugInvincible = false;
 
 let canvas, ctx;
 let player, ground, obstacles, gaps, score, gameOver, lastFrameTime;
@@ -85,6 +87,15 @@ async function init() {
 
   // Initialize game state and start loops
   resetGame();
+  // wire debug toggle if present
+  const dbgToggle = document.getElementById('debugToggle');
+  if (dbgToggle) {
+    dbgToggle.checked = debugInvincible;
+    dbgToggle.addEventListener('change', (e) => {
+      debugInvincible = !!e.target.checked;
+      document.getElementById('status').textContent = debugInvincible ? 'DEBUG: Invincible | Ready' : 'Ready';
+    });
+  }
   detectLoop();
   gameLoop();
 }
@@ -169,6 +180,7 @@ async function detectLoop() {
         Baseline Nose Y: ${baselineNoseY.toFixed(3)}<br>
         Nose Rise: ${noseRise.toFixed(3)}<br>
         Mouth Open Amount: ${mouthOpenAmount.toFixed(3)}<br>
+        Invincible: ${debugInvincible}<br>
         wasMouthOpen: ${wasMouthOpen}<br>
         shieldActive: ${shieldActive}<br>
         shieldTimeLeft: ${shieldTimeLeft.toFixed(2)}s<br>
@@ -261,7 +273,7 @@ function updateGame(dt) {
   gaps.forEach(g => (g.x -= SCROLL_SPEED));
 
   // obstacle collision only when shield inactive
-  if (!shieldActive) {
+  if (!shieldActive && !debugInvincible) {
     for (const o of obstacles) {
       if (
         player.x < o.x + o.w &&
@@ -276,7 +288,7 @@ function updateGame(dt) {
 
   // gap death rules:
   // if player's bottom is touching ground (player.onGround) AND player's horizontal span is fully inside a gap -> die.
-  if (player.onGround) {
+  if (player.onGround && !debugInvincible) {
     for (const g of gaps) {
       const gapLeft = g.x;
       const gapRight = g.x + g.w;
@@ -295,7 +307,8 @@ function updateGame(dt) {
 
   // score
   score += dt * 10;
-  document.getElementById("status").textContent = `${action} | Score: ${Math.floor(score)}`;
+  const dbgPrefix = debugInvincible ? 'DEBUG: Invincible | ' : '';
+  document.getElementById("status").textContent = `${dbgPrefix}${action} | Score: ${Math.floor(score)}`;
 }
 
 function triggerGameOver() {
