@@ -86,7 +86,7 @@ async function init() {
   // Initialize game state and start loops
   resetGame();
   detectLoop();
-  gameLoop();
+  requestAnimationFrame(gameLoop);
 }
 
 //////////////////////
@@ -118,7 +118,7 @@ document.getElementById("tryAgain").addEventListener("click", () => {
   resetGame();
   // restart loops
   detectLoop();
-  gameLoop();
+  requestAnimationFrame(gameLoop);
 });
 
 //////////////////////
