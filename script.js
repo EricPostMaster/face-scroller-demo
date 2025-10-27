@@ -97,7 +97,7 @@ async function init() {
     });
   }
   detectLoop();
-  gameLoop();
+  requestAnimationFrame(gameLoop);
 }
 
 //////////////////////
@@ -129,7 +129,7 @@ document.getElementById("tryAgain").addEventListener("click", () => {
   resetGame();
   // restart loops
   detectLoop();
-  gameLoop();
+  requestAnimationFrame(gameLoop);
 });
 
 //////////////////////
