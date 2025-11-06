@@ -8,7 +8,7 @@ const PLAYER_W = 20;
 const PLAYER_H = 20;
 const GRAVITY = 0.6;
 const JUMP_FORCE = -10;
-const SCROLL_SPEED = 3;
+const SCROLL_SPEED = 2.5;
 const SHIELD_DURATION = 3.0; // seconds
 const GAP_MAX_WIDTH_MULT = 3; // max gap = 3 * player width
 const GAP_MIN_SPACING_MULT = 2; // min spacing between gaps = 2 * player width
