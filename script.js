@@ -50,6 +50,32 @@ async function init() {
   canvas = document.getElementById("gameCanvas");
   ctx = canvas.getContext("2d");
 
+  // store internal resolution to draw at fixed logical size while CSS-resizing for responsiveness
+  const LOGICAL_WIDTH = 400;
+  const LOGICAL_HEIGHT = 300;
+  canvas.width = LOGICAL_WIDTH;
+  canvas.height = LOGICAL_HEIGHT;
+
+  // make canvas scale to CSS size while preserving internal resolution
+  function resizeCanvasToDisplaySize() {
+    const rect = canvas.getBoundingClientRect();
+    // If CSS size differs from internal resolution, scale drawing via transform
+    const scaleX = rect.width / canvas.width;
+    const scaleY = rect.height / canvas.height;
+    ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+    // recompute ground based on logical height in case layout changed
+    ground = canvas.height - 40;
+    // keep player y anchored to ground if on ground
+    if (player && player.onGround) player.y = ground - player.h;
+  }
+
+  // call once and on window resize
+  window.addEventListener('resize', () => {
+    // allow browser to recalc layout then adjust transform
+    requestAnimationFrame(resizeCanvasToDisplaySize);
+  });
+  requestAnimationFrame(resizeCanvasToDisplaySize);
+
   // initialize video element
   video = document.getElementById("webcam");
 
@@ -109,6 +135,7 @@ async function init() {
 //////////////////////
 function resetGame() {
   player = { x: 50, y: 240, w: PLAYER_W, h: PLAYER_H, vy: 0, onGround: true };
+  // recompute ground using logical canvas height
   ground = canvas.height - 40;
   obstacles = [];
   gaps = [];
