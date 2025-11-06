@@ -13,9 +13,20 @@ body {
   text-align: center;
   overflow: hidden;
 }
+#app {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 16px;
+  padding: 12px;
+}
+#gameArea {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
 #gameCanvas {
   display: block;
-  margin: 0 auto;
   background: #222;
   border-radius: 10px;
 }
@@ -42,20 +53,95 @@ body {
   padding: 10px 20px;
   margin-top: 10px;
 }
+#scoreBoard {
+  width: 220px;
+  background: #222;
+  border-radius: 8px;
+  padding: 10px;
+  text-align: left;
+  color: #fff;
+}
+#scoreBoard h3 {
+  margin: 4px 0 8px 0;
+  font-size: 1.0rem;
+  text-align: center;
+}
+#scoreList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.scoreRow {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+.scoreRow:nth-child(odd) { background: rgba(255,255,255,0.02); }
+.scoreName { color: #ffd; }
+.scoreValue { color: #9f9; }
+.small { font-size: 0.85rem; color: #bbb }
+#namePrompt {
+  display: none;
+  margin-top: 8px;
+}
+#resetScores {
+  margin-top: 8px;
+  background: transparent;
+  color: #f88;
+  border: 1px solid #333;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+/* Responsive: stack scoreboard under the game on narrow screens */
+@media (max-width: 700px) {
+  #app {
+    flex-direction: column;
+    align-items: center;
+  }
+  #scoreBoard {
+    width: calc(100% - 24px);
+    max-width: 480px;
+    margin-top: 12px;
+  }
+  #gameCanvas {
+    width: calc(100% - 24px);
+    height: auto;
+    max-width: 480px;
+  }
+  #debug { width: calc(100% - 24px); max-width: 480px; }
+}
 </style>
 </head>
 <body>
 <h2>🎮 Face-Controlled Side Scroller</h2>
 <video id="webcam" autoplay playsinline muted style="display:none;"></video>
-<canvas id="gameCanvas" width="400" height="300"></canvas>
-<div id="status">Loading model...</div>
-<div id="debug">Debug info will appear here</div>
-<div style="margin:6px;">
-  <label style="font-size:0.95em;">
-    <input type="checkbox" id="debugToggle"> Debug Mode (Invincible)
-  </label>
+
+<div id="app">
+  <div id="gameArea">
+    <canvas id="gameCanvas" width="400" height="300"></canvas>
+    <div id="status">Loading model...</div>
+    <div id="debug">Debug info will appear here</div>
+    <div style="margin:6px;">
+      <label style="font-size:0.95em;">
+        <input type="checkbox" id="debugToggle"> Debug Mode (Invincible)
+      </label>
+    </div>
+    <button id="tryAgain">Try Again</button>
+  </div>
+
+  <aside id="scoreBoard" aria-label="Top scores">
+    <h3>Top 5 Scores</h3>
+    <ul id="scoreList"></ul>
+    <div id="namePrompt">
+      <div class="small">You made the top 5! Enter your name:</div>
+      <input id="playerName" type="text" maxlength="16" placeholder="Your name" />
+      <button id="saveName">Save</button>
+    </div>
+    <button id="resetScores" title="Clear saved scores">Reset Scores</button>
+  </aside>
 </div>
-<button id="tryAgain">Try Again</button>
 
 <script type="module" src="script.js"></script>
 </body>
