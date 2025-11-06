@@ -34,6 +34,10 @@ let player, ground, obstacles, gaps, score, gameOver, lastFrameTime;
 let shieldActive = false;
 let shieldTimeLeft = 0;
 let action = "😐 Idle";
+// Scoreboard state
+const SCORE_KEY = 'faceScroller_topScores';
+let topScores = []; // {name, score}
+let pendingScore = null; // numeric score waiting for name
 
 // For visual nose dot
 let lastNoseY = null;
@@ -315,6 +319,92 @@ function triggerGameOver() {
   gameOver = true;
   document.getElementById("status").textContent = `💀 Game Over! Score: ${Math.floor(score)}`;
   document.getElementById("tryAgain").style.display = "inline-block";
+  // check scoreboard entry
+  checkHighScore(Math.floor(score));
+}
+
+//////////////////////
+// Scoreboard logic //
+//////////////////////
+function loadScores() {
+  try {
+    const raw = localStorage.getItem(SCORE_KEY);
+    topScores = raw ? JSON.parse(raw) : [];
+    // normalize
+    if (!Array.isArray(topScores)) topScores = [];
+  } catch (e) {
+    console.warn('Failed to load scores', e);
+    topScores = [];
+  }
+}
+
+function saveScores() {
+  try {
+    localStorage.setItem(SCORE_KEY, JSON.stringify(topScores));
+  } catch (e) {
+    console.warn('Failed to save scores', e);
+  }
+}
+
+function renderScores() {
+  const el = document.getElementById('scoreList');
+  el.innerHTML = '';
+  for (let i = 0; i < 5; i++) {
+    const row = document.createElement('li');
+    row.className = 'scoreRow';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'scoreName';
+    const scoreSpan = document.createElement('span');
+    scoreSpan.className = 'scoreValue';
+    if (topScores[i]) {
+      nameSpan.textContent = `${i+1}. ${topScores[i].name}`;
+      scoreSpan.textContent = `${topScores[i].score}`;
+    } else {
+      nameSpan.textContent = `${i+1}. —`;
+      scoreSpan.textContent = `0`;
+    }
+    row.appendChild(nameSpan);
+    row.appendChild(scoreSpan);
+    el.appendChild(row);
+  }
+}
+
+function checkHighScore(s) {
+  // Determine if score qualifies for top 5
+  const scores = topScores.map(x => x.score).slice();
+  scores.push(s);
+  scores.sort((a,b)=>b-a);
+  const rank = scores.indexOf(s);
+  if (rank >=0 && rank < 5) {
+    // show name prompt
+    pendingScore = s;
+    const prompt = document.getElementById('namePrompt');
+    prompt.style.display = 'block';
+    const input = document.getElementById('playerName');
+    input.value = '';
+    input.focus();
+  } else {
+    // not a high score, nothing to do
+    pendingScore = null;
+  }
+}
+
+function commitName(name) {
+  if (!pendingScore) return;
+  const entry = { name: name || 'Anon', score: pendingScore };
+  topScores.push(entry);
+  topScores.sort((a,b)=>b.score - a.score);
+  topScores = topScores.slice(0,5);
+  saveScores();
+  renderScores();
+  pendingScore = null;
+  document.getElementById('namePrompt').style.display = 'none';
+}
+
+function resetScores() {
+  topScores = [];
+  saveScores();
+  renderScores();
 }
 
 //////////////////////
@@ -406,4 +496,22 @@ function drawGame() {
 init().catch(err => {
   console.error("Initialization error:", err);
   document.getElementById("status").textContent = "Failed to load model.";
+});
+
+// wire scoreboard UI after load
+window.addEventListener('load', () => {
+  loadScores();
+  renderScores();
+  document.getElementById('saveName').addEventListener('click', () => {
+    const name = document.getElementById('playerName').value.trim();
+    commitName(name);
+  });
+  document.getElementById('playerName').addEventListener('keydown', (e)=>{
+    if (e.key === 'Enter') {
+      commitName(e.target.value.trim());
+    }
+  });
+  document.getElementById('resetScores').addEventListener('click', ()=>{
+    if (confirm('Clear all saved top scores?')) resetScores();
+  });
 });

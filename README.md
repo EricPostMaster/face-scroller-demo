@@ -19,6 +19,12 @@ Tips:
 - What ideas could use more head/face movements?
 
 
+## High Score Board
+
+- A Top 5 score board appears to the right of the game. When you finish a run and your score is good enough for the Top 5, you'll be prompted to enter your name. Scores are saved to localStorage so they'll persist in your browser.
+- To clear saved scores, click the "Reset Scores" button in the scoreboard and confirm.
+
+
 ## How it works ⚙️
 
 - The demo uses your webcam feed and a lightweight face-tracking approach (browser-based JS) to estimate where your face is in the frame. The detected position is mapped to the player's movement on screen. 🕵️‍♂️➡️🕹️
