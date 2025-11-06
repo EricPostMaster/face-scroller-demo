@@ -10,6 +10,11 @@ const GRAVITY = 0.6;
 const JUMP_FORCE = -10;
 const SCROLL_SPEED = 2.5;
 const SHIELD_DURATION = 3.0; // seconds
+const POWERUP_DURATION = 5.0; // seconds for star power-up
+const POWERUP_SPAWN_CHANCE = 0.004; // chance per frame to spawn a star
+// rainbow visual speeds (tweak to change color cycling & pulsing)
+const RAINBOW_HUE_SPEED = 900; // smaller = faster hue cycle (ms per cycle divisor)
+const RAINBOW_PULSE_SPEED = 75; // smaller = faster pulse
 const GAP_MAX_WIDTH_MULT = 3; // max gap = 3 * player width
 const GAP_MIN_SPACING_MULT = 2; // min spacing between gaps = 2 * player width
 
@@ -33,6 +38,9 @@ let canvas, ctx;
 let player, ground, obstacles, gaps, score, gameOver, lastFrameTime;
 let shieldActive = false;
 let shieldTimeLeft = 0;
+let powerUpActive = false;
+let powerUpTimeLeft = 0;
+let powerUps = [];
 let action = "😐 Idle";
 // Scoreboard state
 const SCORE_KEY = 'faceScroller_topScores';
@@ -47,6 +55,7 @@ let noseVisualOffset = 0;
 // Initialization   //
 //////////////////////
 async function init() {
+  console.log('[game] init start');
   canvas = document.getElementById("gameCanvas");
   ctx = canvas.getContext("2d");
 
@@ -117,6 +126,8 @@ async function init() {
 
   // Initialize game state and start loops
   resetGame();
+  console.log('[game] reset done, starting loops');
+
   // wire debug toggle if present
   const dbgToggle = document.getElementById('debugToggle');
   if (dbgToggle) {
@@ -139,6 +150,7 @@ function resetGame() {
   ground = canvas.height - 40;
   obstacles = [];
   gaps = [];
+  powerUps = [];
   score = 0;
   gameOver = false;
   baselineNoseY = null;
@@ -146,6 +158,8 @@ function resetGame() {
   jumpCooldown = false;
   shieldActive = false;
   shieldTimeLeft = 0;
+  powerUpActive = false;
+  powerUpTimeLeft = 0;
   action = "😐 Idle";
   lastFrameTime = performance.now();
   lastNoseY = null;
@@ -205,7 +219,7 @@ async function detectLoop() {
         if (!shieldActive) action = "🦘 Jump!";
       }
 
-      // update debug panel numerics
+      // update debug panel numerics (include power-up info)
       document.getElementById("debug").innerHTML = `
         Nose Y: ${nose.y.toFixed(3)}<br>
         Baseline Nose Y: ${baselineNoseY.toFixed(3)}<br>
@@ -215,6 +229,9 @@ async function detectLoop() {
         wasMouthOpen: ${wasMouthOpen}<br>
         shieldActive: ${shieldActive}<br>
         shieldTimeLeft: ${shieldTimeLeft.toFixed(2)}s<br>
+        powerUpActive: ${powerUpActive}<br>
+        powerUpTimeLeft: ${powerUpTimeLeft.toFixed(2)}s<br>
+        activePowerUpsOnField: ${powerUps.filter(p=>!p.collected).length}<br>
         jumpCooldown: ${jumpCooldown}
       `;
     }
@@ -286,6 +303,16 @@ function updateGame(dt) {
     }
   }
 
+  // power-up timer
+  if (powerUpActive) {
+    powerUpTimeLeft -= dt;
+    if (powerUpTimeLeft <= 0) {
+      powerUpTimeLeft = 0;
+      powerUpActive = false;
+      action = "😐 Idle";
+    }
+  }
+
   // physics
   player.vy += GRAVITY;
   player.y += player.vy;
@@ -298,13 +325,23 @@ function updateGame(dt) {
   // spawn with probabilities but enforce gap/spacing rules
   if (Math.random() < 0.02) spawnObstacleAt(canvas.width);
   if (Math.random() < 0.01) spawnGapIfAllowed();
+  // spawn star power-up occasionally
+  const roll = Math.random();
+  if (roll < POWERUP_SPAWN_CHANCE) {
+    console.log('[powerup] spawn roll', roll, '<', POWERUP_SPAWN_CHANCE);
+    spawnPowerUpAt(canvas.width);
+  }
 
   // move environment
   obstacles.forEach(o => (o.x -= SCROLL_SPEED));
   gaps.forEach(g => (g.x -= SCROLL_SPEED));
+  powerUps.forEach(p => (p.x -= SCROLL_SPEED));
 
-  // obstacle collision only when shield inactive
-  if (!shieldActive && !debugInvincible) {
+  // check for star pickups after moving power-ups
+  checkPowerUpPickup();
+
+  // obstacle collision only when no invincibility (shield, star power-up, or debug)
+  if (!shieldActive && !powerUpActive && !debugInvincible) {
     for (const o of obstacles) {
       if (
         player.x < o.x + o.w &&
@@ -317,9 +354,8 @@ function updateGame(dt) {
     }
   }
 
-  // gap death rules:
-  // if player's bottom is touching ground (player.onGround) AND player's horizontal span is fully inside a gap -> die.
-  if (player.onGround && !debugInvincible) {
+  // gap death rules: if player's bottom is touching ground AND not invincible -> die if fully inside a gap
+  if (player.onGround && !powerUpActive && !debugInvincible) {
     for (const g of gaps) {
       const gapLeft = g.x;
       const gapRight = g.x + g.w;
@@ -328,18 +364,48 @@ function updateGame(dt) {
         triggerGameOver();
         return;
       }
-      // if partially overlapping gap but any part on ground, continue playing
     }
   }
 
   // cleanup
   obstacles = obstacles.filter(o => o.x + o.w > 0);
   gaps = gaps.filter(g => g.x + g.w > 0);
+  powerUps = powerUps.filter(p => p.x + p.w > 0 && !p.collected);
 
   // score
   score += dt * 10;
   const dbgPrefix = debugInvincible ? 'DEBUG: Invincible | ' : '';
   document.getElementById("status").textContent = `${dbgPrefix}${action} | Score: ${Math.floor(score)}`;
+}
+
+// Power-up helpers
+function spawnPowerUpAt(x) {
+  // star size
+  const w = 18;
+  // choose a height that's reachable: between ground - player.h - 100 and ground - w
+  const maxY = ground - w;
+  const minY = Math.max(ground - player.h - 120, 40);
+  const y = minY + Math.random() * (maxY - minY);
+  powerUps.push({ x, y, w, h: w, collected: false });
+  console.log('[powerup] spawned', { x, y, w });
+}
+
+function checkPowerUpPickup() {
+  for (const p of powerUps) {
+    if (p.collected) continue;
+    if (
+      player.x < p.x + p.w &&
+      player.x + player.w > p.x &&
+      player.y < p.y + p.h &&
+      player.y + player.h > p.y
+    ) {
+      // pick up
+      p.collected = true;
+      powerUpActive = true;
+      powerUpTimeLeft = POWERUP_DURATION;
+      action = "⭐ Star Power!";
+    }
+  }
 }
 
 function triggerGameOver() {
@@ -454,9 +520,35 @@ function drawGame() {
   ctx.fillStyle = "#f44";
   for (const o of obstacles) ctx.fillRect(o.x, o.y, o.w, o.h);
 
-  // player
-  ctx.fillStyle = "#4af";
-  ctx.fillRect(player.x, player.y, player.w, player.h);
+  // power-ups (shiny yellow star)
+  for (const p of powerUps) {
+    if (p.collected) continue;
+    drawStar(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w / 2, p.w / 4, 5);
+    // add a shiny highlight
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.beginPath();
+    ctx.ellipse(p.x + p.w * 0.35, p.y + p.h * 0.28, p.w * 0.12, p.h * 0.08, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // player (rainbow pulse when power-up active)
+  if (powerUpActive) {
+    // create pulsing rainbow color based on time
+  const now = performance.now();
+  const hue = (now / RAINBOW_HUE_SPEED * 360) % 360;
+  // pulse brightness
+  const pulse = 0.6 + 0.4 * Math.sin(now / RAINBOW_PULSE_SPEED);
+    ctx.fillStyle = `hsl(${hue},90%,${50 * pulse}%)`;
+    ctx.fillRect(player.x, player.y, player.w, player.h);
+    // glowing outline
+    ctx.strokeStyle = `hsla(${hue},90%,60%,0.9)`;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(player.x - 2, player.y - 2, player.w + 4, player.h + 4);
+  } else {
+    // normal player
+    ctx.fillStyle = "#4af";
+    ctx.fillRect(player.x, player.y, player.w, player.h);
+  }
 
   // shield visuals
   const barFull = player.w * 1.6;
@@ -479,6 +571,20 @@ function drawGame() {
   } else {
     ctx.strokeStyle = "#333";
     ctx.strokeRect(player.x - (barFull - player.w) / 2, player.y - 12, barFull, 6);
+  }
+
+  // power-up (star) visual bar: draw above the shield bar
+  const powerBarFull = barFull;
+  const powerBarX = player.x - (powerBarFull - player.w) / 2;
+  const powerBarY = player.y - 20; // 8px above shield bar
+  if (powerUpActive) {
+    // yellow filling proportional to remaining time
+    ctx.fillStyle = "#ffd54f"; // warm yellow
+    const pw = powerBarFull * (powerUpTimeLeft / POWERUP_DURATION);
+    ctx.fillRect(powerBarX, powerBarY, pw, 6);
+    // outline
+    ctx.strokeStyle = "#6b4";
+    ctx.strokeRect(powerBarX, powerBarY, powerBarFull, 6);
   }
 
   // Visual nose indicator at top center
@@ -515,6 +621,31 @@ function drawGame() {
   ctx.fillStyle = "#fff";
   ctx.font = "16px sans-serif";
   ctx.fillText("Score: " + Math.floor(score), canvas.width - 110, 24);
+}
+
+// drawStar helper: draws a filled star at cx,cy with outer/inner radii and points
+function drawStar(ctx, cx, cy, outerR, innerR, points) {
+  ctx.save();
+  ctx.beginPath();
+  for (let i = 0; i < points * 2; i++) {
+    const r = (i % 2 === 0) ? outerR : innerR;
+    const a = (Math.PI * i) / points;
+    const x = cx + Math.cos(a - Math.PI / 2) * r;
+    const y = cy + Math.sin(a - Math.PI / 2) * r;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = "#ffd700"; // gold/yellow
+  ctx.fill();
+  // add subtle radial shine
+  const g = ctx.createRadialGradient(cx - outerR * 0.2, cy - outerR * 0.35, 2, cx, cy, outerR * 1.2);
+  g.addColorStop(0, 'rgba(255,255,255,0.45)');
+  g.addColorStop(0.2, 'rgba(255,255,255,0.15)');
+  g.addColorStop(0.6, 'rgba(255,255,255,0.02)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.restore();
 }
 
 //////////////////////
