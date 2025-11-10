@@ -58,7 +58,10 @@ body {
   gap: 8px;
   align-items: flex-end;
   justify-content: flex-end;
-  pointer-events: auto;
+  /* Prevent the dock from intercepting pointer events across its whole area
+     which can block controls beneath it on small screens; enable pointer
+     events only on interactive children below. */
+  pointer-events: none;
   z-index: 9999;
 }
 
@@ -69,6 +72,12 @@ body {
   padding: 8px 10px;
   border-radius: 8px;
   cursor: pointer;
+}
+
+/* Re-enable pointer events for interactive elements inside the dock */
+#debugDock #debugToggleDock,
+#debugDock #debug {
+  pointer-events: auto;
 }
 
 /* Collapsed: hide the debug panel visually but keep it accessible when opened */
