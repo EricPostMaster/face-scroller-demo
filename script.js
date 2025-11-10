@@ -781,28 +781,11 @@ function drawGame() {
     }
   }
 
-  // power-ups (shiny yellow star)
+  // power-ups (render as emojis for a quick approachable look)
   for (const p of powerUps) {
     if (p.collected) continue;
-    if (p.type === 'star') {
-      drawStar(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w / 2, p.w / 4, 5);
-      // add a shiny highlight
-      ctx.fillStyle = "rgba(255,255,255,0.5)";
-      ctx.beginPath();
-      ctx.ellipse(p.x + p.w * 0.35, p.y + p.h * 0.28, p.w * 0.12, p.h * 0.08, -0.4, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (p.type === 'wings') {
-      drawWingsIcon(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w * 0.9);
-    } else if (p.type === 'shoe') {
-      drawShoeIcon(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w * 0.9);
-    } else if (p.type === 'freeze') {
-      drawFreezeGunIcon(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w * 0.9);
-    } else if (p.type === 'redcross') {
-      drawRedCrossIcon(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w * 0.9);
-    } else {
-      // fallback: draw star
-      drawStar(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w / 2, p.w / 4, 5);
-    }
+    // draw emoji centered in the power-up rect
+    drawEmojiPowerUp(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w, p.type);
   }
 
   // draw active beams
@@ -949,6 +932,33 @@ function drawStar(ctx, cx, cy, outerR, innerR, points) {
   g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g;
   ctx.fill();
+  ctx.restore();
+}
+
+// drawEmojiPowerUp: render a single emoji at cx,cy sized to fit `size`.
+// Uses a font stack that favors emoji-capable fonts on Windows/macOS/Linux.
+function drawEmojiPowerUp(ctx, cx, cy, size, type) {
+  // choose emoji by type
+  let emoji = '⭐';
+  if (type === 'wings') emoji = '🪽'; // feather/wing-like
+  else if (type === 'shoe') emoji = '👟';
+  else if (type === 'freeze') emoji = '🧊';
+  else if (type === 'redcross') emoji = '➕';
+  else if (type === 'star') emoji = '⭐';
+
+  // font sizing: make emoji slightly larger than the power-up box for pop
+  const fontSize = Math.max(14, Math.floor(size * 1.1));
+  // Use emoji-capable font stack; include Segoe UI Emoji for Windows
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `${fontSize}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
+  // drop a subtle shadow/glow for readability on dark backgrounds
+  ctx.shadowColor = 'rgba(0,0,0,0.45)';
+  ctx.shadowBlur = 4;
+  // white-ish fill for better contrast
+  ctx.fillStyle = '#fff';
+  ctx.fillText(emoji, cx, cy + 1); // tiny vertical nudge for optical centering
   ctx.restore();
 }
 
