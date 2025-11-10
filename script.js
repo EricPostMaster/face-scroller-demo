@@ -1129,18 +1129,29 @@ function drawFreezeGunIcon(ctx, cx, cy, size) {
 }
 
 function drawBeam(ctx, x, y) {
+  // Thin light-blue beam: a single stroked line with a soft glow
   ctx.save();
+  // subtle outer glow using shadow
+  ctx.strokeStyle = 'rgba(160,220,255,0.95)';
+  ctx.lineWidth = 2.2; // thin line
+  ctx.lineCap = 'round';
+  ctx.shadowColor = 'rgba(140,200,255,0.65)';
+  ctx.shadowBlur = 8;
   ctx.beginPath();
-  ctx.moveTo(x, y - 3);
-  ctx.lineTo(x + 12, y - 8);
-  ctx.lineTo(x + 18, y - 6);
-  ctx.lineTo(x + 6, y + 6);
-  ctx.closePath();
-  const g = ctx.createLinearGradient(x, y - 6, x + 18, y + 6);
-  g.addColorStop(0, 'rgba(160,220,255,0.95)');
-  g.addColorStop(1, 'rgba(80,170,240,0.6)');
-  ctx.fillStyle = g;
-  ctx.fill();
+  // draw line slightly angled to the right
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + 18, y - 4);
+  ctx.stroke();
+
+  // inner brighter core (no shadow) to make the beam look crisp
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(200,240,255,1)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + 18, y - 4);
+  ctx.stroke();
+
   ctx.restore();
 }
 
