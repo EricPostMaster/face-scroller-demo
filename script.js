@@ -672,4 +672,32 @@ window.addEventListener('load', () => {
   document.getElementById('resetScores').addEventListener('click', ()=>{
     if (confirm('Clear all saved top scores?')) resetScores();
   });
+
+  // Wire bottom debug dock toggle if present. The game writes debug HTML to #debug
+  const debugToggleDock = document.getElementById('debugToggleDock');
+  const debugEl = document.getElementById('debug');
+  if (debugToggleDock && debugEl) {
+    debugToggleDock.addEventListener('click', () => {
+      const expanded = debugToggleDock.getAttribute('aria-expanded') === 'true';
+      if (expanded) {
+        debugEl.classList.remove('expanded');
+        debugEl.classList.add('collapsed');
+        debugToggleDock.setAttribute('aria-expanded', 'false');
+        debugToggleDock.textContent = 'Show debug';
+        // Un-hide the debug region for assistive tech when collapsed
+        debugEl.setAttribute('aria-hidden', 'true');
+      } else {
+        debugEl.classList.remove('collapsed');
+        debugEl.classList.add('expanded');
+        debugToggleDock.setAttribute('aria-expanded', 'true');
+        debugToggleDock.textContent = 'Hide debug';
+        // Mark the debug region visible to assistive tech when expanded
+        debugEl.setAttribute('aria-hidden', 'false');
+      }
+    });
+  // Start collapsed explicitly
+  debugEl.classList.add('collapsed');
+  debugToggleDock.setAttribute('aria-expanded', 'false');
+  debugEl.setAttribute('aria-hidden', 'true');
+  }
 });

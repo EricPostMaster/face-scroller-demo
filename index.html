@@ -54,6 +54,42 @@ body {
   border-radius: 6px;
   width: 300px;
 }
+
+/* Bottom debug dock: collapsed by default on all screens */
+#debugDock {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  justify-content: flex-end;
+  pointer-events: auto;
+  z-index: 9999;
+}
+
+#debugDock #debugToggleDock {
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.06);
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+/* Collapsed: hide the debug panel visually but keep it accessible when opened */
+#debugDock #debug.collapsed {
+  display: none;
+}
+
+/* Expanded debug panel */
+#debugDock #debug.expanded {
+  display: block;
+  max-height: 40vh;
+  overflow: auto;
+  width: calc(100% - 120px);
+}
 #tryAgain {
   display: none;
   font-size: 1.2em;
@@ -132,13 +168,7 @@ body {
 <div id="app">
   <div id="gameArea">
     <canvas id="gameCanvas" width="400" height="300"></canvas>
-    <div id="status">Loading model...</div>
-    <div id="debug">Debug info will appear here</div>
-    <div style="margin:6px;">
-      <label style="font-size:0.95em;">
-        <input type="checkbox" id="debugToggle"> Debug Mode (Invincible)
-      </label>
-    </div>
+  <div id="status">Loading model...</div>
     <button id="tryAgain">Try Again</button>
   </div>
 
@@ -152,6 +182,18 @@ body {
     </div>
     <button id="resetScores" title="Clear saved scores">Reset Scores</button>
   </aside>
+  <div style="margin:6px;">
+    <label style="font-size:0.95em;">
+      <input type="checkbox" id="debugToggle"> Debug Mode (Invincible)
+    </label>
+  </div>
+</div>
+</div>
+
+<!-- Bottom debug dock (collapsed by default). The game's JS will continue to write into #debug -->
+<div id="debugDock">
+  <button id="debugToggleDock" aria-expanded="false" aria-controls="debug" title="Show debug info">Show debug</button>
+  <div id="debug" class="collapsed" role="region" aria-hidden="true">Debug info will appear here</div>
 </div>
 
 <script type="module" src="script.js"></script>
