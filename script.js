@@ -23,7 +23,7 @@ const POWERUP_SPAWN_CAP = 0.1; // max powerups spawn per frame
 // Freeze-gun spawn chance (blue gun)
 const POWERUP_SPAWN_CHANCE_FREEZE = 0.0012;
 // Red-cross (one-time collision) spawn chance
-const POWERUP_SPAWN_CHANCE_REDCROSS = 0.10018;
+const POWERUP_SPAWN_CHANCE_REDCROSS = 0.0018;
 // jumping shoe modifiers
 const SHOES_JUMP_MULT = 1.45; // 45% higher jump
 const SHOES_GRAVITY_MULT = 0.75; // slightly reduced gravity for longer airtime
