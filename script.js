@@ -255,9 +255,13 @@ function doJump() {
 // Level spawn utils//
 //////////////////////
 function spawnObstacleAt(x) {
-  const w = 20, h = 20;
+  // make skeleton obstacles taller so they have bodies — base 20x32
+  const w = 20, h = 32;
   const overlapsGap = gaps.some(g => !(x + w <= g.x || x >= g.x + g.w));
-  if (!overlapsGap) obstacles.push({ x, y: ground - h, w, h });
+  if (!overlapsGap) {
+    // give each obstacle a phase for animation (walking cycle) and slight random offset
+    obstacles.push({ x, y: ground - h, w, h, phase: Math.random() * Math.PI * 2 });
+  }
 }
 
 function spawnGapIfAllowed() {
@@ -336,6 +340,12 @@ function updateGame(dt) {
   obstacles.forEach(o => (o.x -= SCROLL_SPEED));
   gaps.forEach(g => (g.x -= SCROLL_SPEED));
   powerUps.forEach(p => (p.x -= SCROLL_SPEED));
+
+  // advance skeleton walk phase so limbs animate in sync with scroll speed
+  // faster scroll -> faster walk cycle. scale factor chosen to look natural.
+  // stronger phase advance so walking is visible; ties to scroll speed
+  const phaseAdvance = (SCROLL_SPEED / 60) * 100 * dt; // larger multiplier -> faster visible walk
+  obstacles.forEach(o => { if (typeof o.phase === 'number') o.phase += phaseAdvance; });
 
   // check for star pickups after moving power-ups
   checkPowerUpPickup();
@@ -516,9 +526,10 @@ function drawGame() {
     ctx.fillRect(g.x, ground, g.w, canvas.height - ground);
   }
 
-  // obstacles (red)
-  ctx.fillStyle = "#f44";
-  for (const o of obstacles) ctx.fillRect(o.x, o.y, o.w, o.h);
+  // obstacles (skeletons)
+  for (const o of obstacles) {
+    drawSkeleton(ctx, o.x, o.y, o.w, o.h, o.phase || 0);
+  }
 
   // power-ups (shiny yellow star)
   for (const p of powerUps) {
@@ -645,6 +656,100 @@ function drawStar(ctx, cx, cy, outerR, innerR, points) {
   g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g;
   ctx.fill();
+  ctx.restore();
+}
+
+// drawSkeleton helper: draws a taller stylized skeleton and animates limbs using phase
+function drawSkeleton(ctx, x, y, w, h, phase = 0) {
+  ctx.save();
+  // operate in a 20x32 unit space (width x height)
+  const UW = 20, UH = 32;
+  ctx.translate(x, y);
+  const sx = w / UW;
+  const sy = h / UH;
+  ctx.scale(sx, sy);
+
+  // small vertical bob so walking looks lively (make slightly larger)
+  const bob = Math.sin(phase * 2) * 1.4; // units
+  ctx.translate(0, bob);
+
+  // colors
+  const boneFill = "#fff";
+  const boneStroke = "#111";
+
+  // HEAD
+  ctx.fillStyle = boneFill;
+  ctx.beginPath();
+  ctx.ellipse(10, 6, 6, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // jaw
+  ctx.fillRect(7, 10, 6, 3);
+
+  // eyes
+  ctx.fillStyle = boneStroke;
+  ctx.beginPath(); ctx.ellipse(8, 6, 1.6, 2, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(12, 6, 1.6, 2, 0, 0, Math.PI * 2); ctx.fill();
+  // nose
+  ctx.beginPath(); ctx.moveTo(10, 8); ctx.lineTo(9, 9.2); ctx.lineTo(11, 9.2); ctx.closePath(); ctx.fill();
+
+  // NECK / TORSO
+  ctx.strokeStyle = boneFill;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(10, 13);
+  ctx.lineTo(10, 18);
+  ctx.stroke();
+
+  // rib-ish horizontal bones
+  ctx.beginPath();
+  ctx.moveTo(6, 15); ctx.lineTo(14, 15);
+  ctx.moveTo(6.5, 17); ctx.lineTo(13.5, 17);
+  ctx.stroke();
+
+  // pelvis
+  ctx.beginPath();
+  ctx.moveTo(8.5, 19); ctx.lineTo(11.5, 19);
+  ctx.stroke();
+
+  // limbs animation: legs and arms swing opposite each other
+  // larger swings for more visible animation
+  const legSwing = Math.sin(phase) * 5; // px in unit space
+  const legLift = Math.max(0, Math.sin(phase)) * 3;
+  const armSwing = Math.sin(phase + Math.PI) * 4;
+
+  // LEGS (from pelvis ~ y=19 down to feet ~ y=28)
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  // left leg
+  ctx.moveTo(10, 19);
+  ctx.lineTo(10 - 3 + legSwing, 26 + legLift);
+  // right leg
+  ctx.moveTo(10, 19);
+  ctx.lineTo(10 + 3 + -legSwing, 26 + Math.max(0, -Math.sin(phase)) * 2);
+  ctx.stroke();
+
+  // small feet
+  ctx.beginPath();
+  ctx.moveTo(7.5 + legSwing, 27.5); ctx.lineTo(9 + legSwing, 27.5);
+  ctx.moveTo(11 + -legSwing, 27.5); ctx.lineTo(12.5 + -legSwing, 27.5);
+  ctx.stroke();
+
+  // ARMS (shoulder around y=14). simple two-segment look
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  // left arm from shoulder (10,14) to elbow to hand
+  ctx.moveTo(10, 14);
+  ctx.lineTo(10 - 5 + armSwing, 16 + (Math.sin(phase) * 1.2));
+  // right arm
+  ctx.moveTo(10, 14);
+  ctx.lineTo(10 + 5 + -armSwing, 16 + (Math.sin(phase + Math.PI) * 1.2));
+  ctx.stroke();
+
+  // subtle outline on head
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+  ctx.lineWidth = 0.6;
+  ctx.beginPath(); ctx.ellipse(10, 6, 6, 5, 0, 0, Math.PI * 2); ctx.stroke();
+
   ctx.restore();
 }
 
