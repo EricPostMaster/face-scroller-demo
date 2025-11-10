@@ -11,7 +11,16 @@ body {
   background: #111;
   color: #eee;
   text-align: center;
-  overflow: hidden;
+}
+/* Make the page vertically scrollable on small devices. Previously overflow:hidden
+   prevented scrolling so scoreboard and buttons became unreachable. */
+html, body {
+  height: 100%;
+}
+
+/* On small screens allow natural scrolling and ensure content can flow vertically */
+body {
+  -webkit-overflow-scrolling: touch;
 }
 #app {
   display: flex;
@@ -19,6 +28,8 @@ body {
   justify-content: center;
   gap: 16px;
   padding: 12px;
+  /* allow app content to grow and push page height so the browser can scroll */
+  width: 100%;
 }
 #gameArea {
   display: flex;
