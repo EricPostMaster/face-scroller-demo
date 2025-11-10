@@ -10,8 +10,34 @@ const GRAVITY = 0.6;
 const JUMP_FORCE = -10;
 const SCROLL_SPEED = 2.5;
 const SHIELD_DURATION = 3.0; // seconds
-const POWERUP_DURATION = 5.0; // seconds for star power-up
-const POWERUP_SPAWN_CHANCE = 0.004; // chance per frame to spawn a star
+const POWERUP_DURATION = 5.0; // seconds for star (invincibility)
+// per-type spawn chances (chance per frame)
+// Stars (invincibility) should be very rare
+const POWERUP_SPAWN_CHANCE_STAR = 0.0005;
+// Wings should be more common
+const POWERUP_SPAWN_CHANCE_WINGS = 0.0025;
+// Jumping shoe is somewhat common too
+const POWERUP_SPAWN_CHANCE_SHOE = 0.0025;
+// helper: overall spawn envelope max per frame (optional safety cap)
+const POWERUP_SPAWN_CAP = 0.1; // max powerups spawn per frame
+// Freeze-gun spawn chance (blue gun)
+const POWERUP_SPAWN_CHANCE_FREEZE = 0.0012;
+// Red-cross (one-time collision) spawn chance
+const POWERUP_SPAWN_CHANCE_REDCROSS = 0.10018;
+// jumping shoe modifiers
+const SHOES_JUMP_MULT = 1.45; // 45% higher jump
+const SHOES_GRAVITY_MULT = 0.75; // slightly reduced gravity for longer airtime
+// duration specifically for shoe powerup (seconds)
+const SHOES_DURATION = 3.0; // shorter than general POWERUP_DURATION
+// explicit wings duration (can be tuned separately)
+const WINGS_DURATION = 3.0; // default to the general powerup duration
+// freeze-gun behavior
+const FREEZE_DURATION = 3.0; // how long an enemy stays frozen
+const FREEZE_BEAM_INTERVAL = 0.45; // seconds between auto-shots when freeze-gun active
+const FREEZE_BEAM_SPEED = 420; // px / second
+const FREEZE_GUN_DURATION = 5.0; // how long the freeze-gun powerup lasts
+// red-cross behavior
+const REDCROSS_DURATION = 30.0; // how long the red-cross lasts if unused
 // rainbow visual speeds (tweak to change color cycling & pulsing)
 const RAINBOW_HUE_SPEED = 900; // smaller = faster hue cycle (ms per cycle divisor)
 const RAINBOW_PULSE_SPEED = 75; // smaller = faster pulse
@@ -38,8 +64,24 @@ let canvas, ctx;
 let player, ground, obstacles, gaps, score, gameOver, lastFrameTime;
 let shieldActive = false;
 let shieldTimeLeft = 0;
+// generic power-up state (for star invincibility)
 let powerUpActive = false;
 let powerUpTimeLeft = 0;
+// wings powerup state
+let wingsActive = false;
+let wingsTimeLeft = 0;
+// shoe powerup state
+let shoeActive = false;
+let shoeTimeLeft = 0;
+// freeze-gun state
+let freezeGunActive = false;
+let freezeGunTimeLeft = 0;
+let freezeFireCooldown = 0;
+let beams = [];
+let particles = [];
+// red-cross one-time hit state
+let redCrossActive = false;
+let redCrossTimeLeft = 0;
 let powerUps = [];
 let action = "😐 Idle";
 // Scoreboard state
@@ -160,6 +202,10 @@ function resetGame() {
   shieldTimeLeft = 0;
   powerUpActive = false;
   powerUpTimeLeft = 0;
+  wingsActive = false;
+  wingsTimeLeft = 0;
+  shoeActive = false;
+  shoeTimeLeft = 0;
   action = "😐 Idle";
   lastFrameTime = performance.now();
   lastNoseY = null;
@@ -244,7 +290,9 @@ async function detectLoop() {
 
 function doJump() {
   if (player.onGround) {
-    player.vy = JUMP_FORCE;
+    // apply shoe multiplier if active
+    const jumpForce = shoeActive ? JUMP_FORCE * SHOES_JUMP_MULT : JUMP_FORCE;
+    player.vy = jumpForce;
     player.onGround = false;
   }
   jumpCooldown = true;
@@ -316,9 +364,29 @@ function updateGame(dt) {
       action = "😐 Idle";
     }
   }
+  // wings timer
+  if (wingsActive) {
+    wingsTimeLeft -= dt;
+    if (wingsTimeLeft <= 0) {
+      wingsTimeLeft = 0;
+      wingsActive = false;
+      action = "\ud83d\ude10 Idle";
+    }
+  }
+  // shoe timer
+  if (shoeActive) {
+    shoeTimeLeft -= dt;
+    if (shoeTimeLeft <= 0) {
+      shoeTimeLeft = 0;
+      shoeActive = false;
+      action = "😐 Idle";
+    }
+  }
 
   // physics
-  player.vy += GRAVITY;
+  // if shoe active, reduce gravity slightly for longer airtime
+  const gravity = shoeActive ? GRAVITY * SHOES_GRAVITY_MULT : GRAVITY;
+  player.vy += gravity;
   player.y += player.vy;
   if (player.y >= ground - player.h) {
     player.y = ground - player.h;
@@ -329,17 +397,36 @@ function updateGame(dt) {
   // spawn with probabilities but enforce gap/spacing rules
   if (Math.random() < 0.02) spawnObstacleAt(canvas.width);
   if (Math.random() < 0.01) spawnGapIfAllowed();
-  // spawn star power-up occasionally
-  const roll = Math.random();
-  if (roll < POWERUP_SPAWN_CHANCE) {
-    console.log('[powerup] spawn roll', roll, '<', POWERUP_SPAWN_CHANCE);
-    spawnPowerUpAt(canvas.width);
+  // spawn power-ups occasionally using independent per-type chances
+  // ensure we spawn at most POWERUP_SPAWN_CAP per frame
+  let spawnedThisFrame = 0;
+  if (spawnedThisFrame < POWERUP_SPAWN_CAP && Math.random() < POWERUP_SPAWN_CHANCE_STAR) {
+    spawnPowerUpAt(canvas.width, 'star');
+    spawnedThisFrame++;
+  }
+  if (spawnedThisFrame < POWERUP_SPAWN_CAP && Math.random() < POWERUP_SPAWN_CHANCE_WINGS) {
+    spawnPowerUpAt(canvas.width, 'wings');
+    spawnedThisFrame++;
+  }
+  if (spawnedThisFrame < POWERUP_SPAWN_CAP && Math.random() < POWERUP_SPAWN_CHANCE_SHOE) {
+    spawnPowerUpAt(canvas.width, 'shoe');
+    spawnedThisFrame++;
+  }
+  if (spawnedThisFrame < POWERUP_SPAWN_CAP && Math.random() < POWERUP_SPAWN_CHANCE_FREEZE) {
+    spawnPowerUpAt(canvas.width, 'freeze');
+    spawnedThisFrame++;
+  }
+  if (spawnedThisFrame < POWERUP_SPAWN_CAP && Math.random() < POWERUP_SPAWN_CHANCE_REDCROSS) {
+    spawnPowerUpAt(canvas.width, 'redcross');
+    spawnedThisFrame++;
   }
 
   // move environment
   obstacles.forEach(o => (o.x -= SCROLL_SPEED));
   gaps.forEach(g => (g.x -= SCROLL_SPEED));
   powerUps.forEach(p => (p.x -= SCROLL_SPEED));
+  // advance beams
+  beams.forEach(b => b.x += b.vx * dt);
 
   // advance skeleton walk phase so limbs animate in sync with scroll speed
   // faster scroll -> faster walk cycle. scale factor chosen to look natural.
@@ -350,22 +437,98 @@ function updateGame(dt) {
   // check for star pickups after moving power-ups
   checkPowerUpPickup();
 
+  // freeze-gun logic: auto-fire beams while active
+  if (freezeGunActive) {
+    freezeGunTimeLeft -= dt;
+    if (freezeGunTimeLeft <= 0) {
+      freezeGunTimeLeft = 0;
+      freezeGunActive = false;
+    }
+    freezeFireCooldown -= dt;
+    if (freezeFireCooldown <= 0) {
+      // spawn beam from player center toward the right
+      const bx = player.x + player.w;
+      const by = player.y + player.h / 2;
+      beams.push({ x: bx, y: by, vx: FREEZE_BEAM_SPEED, life: 2.0 });
+      freezeFireCooldown = FREEZE_BEAM_INTERVAL;
+    }
+  }
+
+  // beams vs obstacles: freeze enemies they hit
+  for (const b of beams) {
+    for (const o of obstacles) {
+      if (o.frozen) continue; // already frozen
+      if (b.x < o.x + o.w && b.x + 6 > o.x && b.y > o.y && b.y < o.y + o.h) {
+        o.frozen = true;
+        o.freezeTime = FREEZE_DURATION;
+        b.life = 0;
+      }
+    }
+  }
+
+  // remove expired beams
+  beams = beams.filter(b => b.life > 0 && b.x < canvas.width + 50);
+  beams.forEach(b => b.life -= dt);
+
+  // update particles
+  for (const p of particles) {
+    p.vy += GRAVITY * 0.6 * dt; // light gravity on particles
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.life -= dt;
+  }
+  particles = particles.filter(p => p.life > 0 && p.y < canvas.height + 50);
+
+  // start break immediately if player touches any frozen obstacle (start on first contact)
+  for (const o of obstacles) {
+    if (o.frozen && !o.breaking) {
+      if (
+        player.x < o.x + o.w &&
+        player.x + player.w > o.x &&
+        player.y < o.y + o.h &&
+        player.y + player.h > o.y
+      ) {
+        startObstacleBreak(o);
+      }
+    }
+  }
+
   // obstacle collision only when no invincibility (shield, star power-up, or debug)
   if (!shieldActive && !powerUpActive && !debugInvincible) {
     for (const o of obstacles) {
+      // skip obstacles that are already breaking so player isn't penalized while they shatter
+      if (o.breaking) continue;
       if (
         player.x < o.x + o.w &&
         player.x + player.w > o.x &&
         player.y + player.h > o.y
       ) {
+        // if obstacle is frozen, touching it triggers a crack-and-break effect
+        if (o.frozen) {
+          if (!o.breaking) {
+            startObstacleBreak(o);
+          }
+          continue;
+        }
+        // if red-cross active, consume it and destroy the obstacle instead of dying
+        if (redCrossActive) {
+          // consume red-cross: allow one safe collision, destroy this obstacle, then
+          // stop checking further obstacles this frame so we don't die on a second overlap
+          redCrossActive = false;
+          redCrossTimeLeft = 0;
+          // spawn a small break effect and remove obstacle
+          startObstacleBreak(o);
+          break; // exit obstacle loop after consuming the one-time hit
+        }
         triggerGameOver();
         return;
       }
     }
   }
 
-  // gap death rules: if player's bottom is touching ground AND not invincible -> die if fully inside a gap
-  if (player.onGround && !powerUpActive && !debugInvincible) {
+  // gap death rules: if player's bottom is touching ground AND not invincible/wings -> die if fully inside a gap
+  // wingsActive allows crossing gaps (immune to gap death) but not immune to enemy collisions
+  if (player.onGround && !powerUpActive && !wingsActive && !debugInvincible) {
     for (const g of gaps) {
       const gapLeft = g.x;
       const gapRight = g.x + g.w;
@@ -377,7 +540,16 @@ function updateGame(dt) {
     }
   }
 
-  // cleanup
+  // update breaking obstacles and cleanup
+  for (const o of obstacles) {
+    if (o.breaking) {
+      o.breakTime -= dt;
+      if (o.breakTime <= 0) {
+        // mark for removal by moving offscreen
+        o.x = -9999;
+      }
+    }
+  }
   obstacles = obstacles.filter(o => o.x + o.w > 0);
   gaps = gaps.filter(g => g.x + g.w > 0);
   powerUps = powerUps.filter(p => p.x + p.w > 0 && !p.collected);
@@ -389,15 +561,16 @@ function updateGame(dt) {
 }
 
 // Power-up helpers
-function spawnPowerUpAt(x) {
+function spawnPowerUpAt(x, type = 'star') {
   // star size
   const w = 18;
   // choose a height that's reachable: between ground - player.h - 100 and ground - w
   const maxY = ground - w;
   const minY = Math.max(ground - player.h - 120, 40);
   const y = minY + Math.random() * (maxY - minY);
-  powerUps.push({ x, y, w, h: w, collected: false });
-  console.log('[powerup] spawned', { x, y, w });
+  // tag with provided type
+  powerUps.push({ x, y, w, h: w, collected: false, type });
+  console.log('[powerup] spawned', type, { x, y, w });
 }
 
 function checkPowerUpPickup() {
@@ -411,12 +584,66 @@ function checkPowerUpPickup() {
     ) {
       // pick up
       p.collected = true;
-      powerUpActive = true;
-      powerUpTimeLeft = POWERUP_DURATION;
-      action = "⭐ Star Power!";
+      // handle pickups by type
+      if (p.type === 'star') {
+        powerUpActive = true;
+        powerUpTimeLeft = POWERUP_DURATION;
+        action = "\u2b50 Star Power (Invincible)!";
+        console.log('[powerup] picked up star - invincibility on');
+      } else if (p.type === 'wings') {
+        // wings let player cross gaps for a duration but do NOT grant enemy immunity
+        wingsActive = true;
+        wingsTimeLeft = WINGS_DURATION;
+        action = "985 Wings! (Cross gaps)";
+        console.log('[powerup] picked up wings - can cross gaps');
+      } else if (p.type === 'shoe') {
+        // jumping shoe: increase jump height and airtime
+        shoeActive = true;
+        shoeTimeLeft = SHOES_DURATION;
+        action = "👟 Jump Boost!";
+        console.log('[powerup] picked up shoe - jump boosted');
+      } else if (p.type === 'freeze') {
+        // freeze-gun pickup: auto-fire ice beams for a duration
+        freezeGunActive = true;
+        freezeGunTimeLeft = FREEZE_GUN_DURATION;
+        freezeFireCooldown = 0; // allow immediate shot
+        action = "🔵 Freeze Gun!";
+        console.log('[powerup] picked up freeze gun - firing beams');
+      } else if (p.type === 'redcross') {
+        // red-cross: allow one collision without dying
+        redCrossActive = true;
+        redCrossTimeLeft = REDCROSS_DURATION;
+        action = "➕ First Aid! (One safe hit)";
+        console.log('[powerup] picked up red-cross - next collision safe');
+      } else {
+        powerUpActive = true;
+        powerUpTimeLeft = POWERUP_DURATION;
+        action = "Power-up!";
+      }
     }
   }
 }
+
+function startObstacleBreak(o) {
+  o.breaking = true;
+  o.breakTime = 0.35; // seconds for break animation
+  // spawn some particles centered on obstacle
+  const parts = 8 + Math.floor(Math.random() * 6);
+  for (let i = 0; i < parts; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 40 + Math.random() * 160;
+    particles.push({
+      x: o.x + o.w / 2,
+      y: o.y + o.h / 2,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 30,
+      life: 0.6 + Math.random() * 0.6,
+      size: 1 + Math.random() * 3,
+      color: 'rgba(230,240,255,0.95)'
+    });
+  }
+}
+
 
 function triggerGameOver() {
   gameOver = true;
@@ -529,17 +756,58 @@ function drawGame() {
   // obstacles (skeletons)
   for (const o of obstacles) {
     drawSkeleton(ctx, o.x, o.y, o.w, o.h, o.phase || 0);
+    if (o.frozen) {
+      // icy overlay to indicate frozen enemy
+      ctx.fillStyle = 'rgba(170,220,255,0.28)';
+      ctx.fillRect(o.x, o.y, o.w, o.h);
+      // frost rim
+      ctx.strokeStyle = 'rgba(200,240,255,0.6)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(o.x + 0.5, o.y + 0.5, o.w - 1, o.h - 1);
+    }
+    if (o.breaking) {
+      // draw a quick crack overlay centered on obstacle
+      ctx.strokeStyle = 'rgba(220,240,255,0.95)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      const cx = o.x + o.w / 2;
+      const cy = o.y + o.h / 2;
+      for (let i = 0; i < 5; i++) {
+        const a = (Math.PI * 2 * i) / 5 + Math.random() * 0.6;
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(a) * (o.w * (0.3 + Math.random() * 0.5)), cy + Math.sin(a) * (o.h * (0.3 + Math.random() * 0.5)));
+      }
+      ctx.stroke();
+    }
   }
 
   // power-ups (shiny yellow star)
   for (const p of powerUps) {
     if (p.collected) continue;
-    drawStar(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w / 2, p.w / 4, 5);
-    // add a shiny highlight
-    ctx.fillStyle = "rgba(255,255,255,0.5)";
-    ctx.beginPath();
-    ctx.ellipse(p.x + p.w * 0.35, p.y + p.h * 0.28, p.w * 0.12, p.h * 0.08, -0.4, 0, Math.PI * 2);
-    ctx.fill();
+    if (p.type === 'star') {
+      drawStar(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w / 2, p.w / 4, 5);
+      // add a shiny highlight
+      ctx.fillStyle = "rgba(255,255,255,0.5)";
+      ctx.beginPath();
+      ctx.ellipse(p.x + p.w * 0.35, p.y + p.h * 0.28, p.w * 0.12, p.h * 0.08, -0.4, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (p.type === 'wings') {
+      drawWingsIcon(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w * 0.9);
+    } else if (p.type === 'shoe') {
+      drawShoeIcon(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w * 0.9);
+    } else if (p.type === 'freeze') {
+      drawFreezeGunIcon(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w * 0.9);
+    } else if (p.type === 'redcross') {
+      drawRedCrossIcon(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w * 0.9);
+    } else {
+      // fallback: draw star
+      drawStar(ctx, p.x + p.w / 2, p.y + p.h / 2, p.w / 2, p.w / 4, 5);
+    }
+  }
+
+  // draw active beams
+  for (const b of beams) {
+    drawBeam(ctx, b.x, b.y);
   }
 
   // player (rainbow pulse when power-up active)
@@ -559,6 +827,23 @@ function drawGame() {
     // normal player
     ctx.fillStyle = "#4af";
     ctx.fillRect(player.x, player.y, player.w, player.h);
+  }
+
+  // wings active visual: small wing badges at player's shoulders
+  if (wingsActive) {
+    const lx = player.x - 6;
+    const rx = player.x + player.w + 6;
+    const cy = player.y + player.h * 0.35;
+    drawSmallWing(ctx, lx, cy, 10, 6);
+    drawSmallWing(ctx, rx, cy, 10, 6, true);
+  }
+  // shoe active visual: small shoe badge near player's feet
+  if (shoeActive) {
+    drawSmallShoe(ctx, player.x + player.w / 2, player.y + player.h + 6, 12, 8);
+  }
+  // red-cross active visual: small red cross near player's head
+  if (redCrossActive) {
+    drawRedCrossIcon(ctx, player.x + player.w / 2, player.y - 18, 14);
   }
 
   // shield visuals
@@ -596,6 +881,14 @@ function drawGame() {
     // outline
     ctx.strokeStyle = "#6b4";
     ctx.strokeRect(powerBarX, powerBarY, powerBarFull, 6);
+  }
+
+  // draw particles (shards)
+  for (const p of particles) {
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = Math.max(0, p.life / 0.8);
+    ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+    ctx.globalAlpha = 1;
   }
 
   // Visual nose indicator at top center
@@ -750,6 +1043,136 @@ function drawSkeleton(ctx, x, y, w, h, phase = 0) {
   ctx.lineWidth = 0.6;
   ctx.beginPath(); ctx.ellipse(10, 6, 6, 5, 0, 0, Math.PI * 2); ctx.stroke();
 
+  ctx.restore();
+}
+
+// drawWingsIcon: stylized wings used for pickups
+function drawWingsIcon(ctx, cx, cy, size) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  const s = size / 40;
+  ctx.scale(s, s);
+  // left wing
+  ctx.beginPath();
+  ctx.moveTo(-12, 0);
+  ctx.bezierCurveTo(-22, -6, -26, -18, -14, -22);
+  ctx.bezierCurveTo(-6, -18, -2, -12, 0, -8);
+  ctx.fillStyle = '#9be7ff';
+  ctx.fill();
+  // right wing (mirror)
+  ctx.beginPath();
+  ctx.moveTo(12, 0);
+  ctx.bezierCurveTo(22, -6, 26, -18, 14, -22);
+  ctx.bezierCurveTo(6, -18, 2, -12, 0, -8);
+  ctx.fillStyle = '#9be7ff';
+  ctx.fill();
+  // outline
+  ctx.strokeStyle = 'rgba(10,80,90,0.6)';
+  ctx.lineWidth = 2 / s;
+  ctx.stroke();
+  ctx.restore();
+}
+
+// drawShoeIcon: stylized jumping shoe used for pickups
+function drawShoeIcon(ctx, cx, cy, size) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  const s = size / 40;
+  ctx.scale(s, s);
+  ctx.beginPath();
+  ctx.moveTo(-12, 6);
+  ctx.quadraticCurveTo(-6, -2, 6, -2);
+  ctx.quadraticCurveTo(12, -2, 14, 2);
+  ctx.quadraticCurveTo(10, 8, -8, 10);
+  ctx.closePath();
+  ctx.fillStyle = '#ffcc80';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(80,40,10,0.6)';
+  ctx.lineWidth = 1.2 / s;
+  ctx.stroke();
+  // laces
+  ctx.beginPath(); ctx.moveTo(-6, 2); ctx.lineTo(4, 0); ctx.strokeStyle = 'rgba(150,90,50,0.6)'; ctx.lineWidth = 0.8 / s; ctx.stroke();
+  ctx.restore();
+}
+
+function drawSmallShoe(ctx, cx, cy, w, h) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.beginPath();
+  ctx.moveTo(-w/2, 0);
+  ctx.quadraticCurveTo(-w/4, -h/2, w/4, -h/2);
+  ctx.quadraticCurveTo(w/2, -h/2, w/2, 0);
+  ctx.fillStyle = '#ffcc80';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(80,40,10,0.6)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+}
+
+// drawFreezeGunIcon: small blue freeze-gun pickup visual
+function drawFreezeGunIcon(ctx, cx, cy, size) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  const s = size / 40;
+  ctx.scale(s, s);
+  // barrel
+  ctx.fillStyle = '#7fc9ff';
+  ctx.fillRect(-10, -4, 18, 8);
+  // muzzle
+  ctx.fillStyle = '#5fb0ff';
+  ctx.fillRect(8, -3, 6, 6);
+  // grip
+  ctx.fillStyle = '#3f7fb0';
+  ctx.fillRect(-12, 2, 6, 6);
+  ctx.restore();
+}
+
+function drawBeam(ctx, x, y) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(x, y - 3);
+  ctx.lineTo(x + 12, y - 8);
+  ctx.lineTo(x + 18, y - 6);
+  ctx.lineTo(x + 6, y + 6);
+  ctx.closePath();
+  const g = ctx.createLinearGradient(x, y - 6, x + 18, y + 6);
+  g.addColorStop(0, 'rgba(160,220,255,0.95)');
+  g.addColorStop(1, 'rgba(80,170,240,0.6)');
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.restore();
+}
+
+// draw red cross icon for pickup
+function drawRedCrossIcon(ctx, cx, cy, size) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  const s = size / 40;
+  ctx.scale(s, s);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(-6, -2, 12, 4);
+  ctx.fillRect(-2, -6, 4, 12);
+  ctx.strokeStyle = 'rgba(180,20,20,0.9)';
+  ctx.lineWidth = 2 / s;
+  ctx.strokeRect(-8, -8, 16, 16);
+  ctx.restore();
+}
+
+// small shoulder wing for player badge; flip horizontally when mirror=true
+function drawSmallWing(ctx, cx, cy, w, h, mirror = false) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  if (mirror) ctx.scale(-1, 1);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.quadraticCurveTo(-4, -4, -8, -6);
+  ctx.quadraticCurveTo(-6, -2, -2, -1);
+  ctx.fillStyle = '#9be7ff';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(5,60,70,0.5)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
   ctx.restore();
 }
 
