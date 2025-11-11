@@ -76,6 +76,10 @@ let debugInvincible = false;
 
 let canvas, ctx;
 let player, ground, obstacles, gaps, score, gameOver, lastFrameTime;
+// millisecond timestamp of last reset; used to ignore immediate inputs/pickups for a short grace period
+let lastResetTime = 0;
+// grace period after a reset during which mouth-open or pickups are ignored (ms)
+const RESET_GRACE_MS = 600;
 // selection state
 let playerChosen = false;
 let chosenCharacterIndex = null;
@@ -353,6 +357,8 @@ function resetGame() {
   document.getElementById("tryAgain").style.display = "none";
   document.getElementById("status").textContent = "Ready";
   document.getElementById("debug").innerHTML = "Debug info will appear here";
+  // record reset time so we can ignore immediate mouth triggers / accidental pickups
+  lastResetTime = performance.now();
 }
 
 // Ensure Try Again restarts detection & game loops
@@ -401,7 +407,9 @@ async function detectLoop() {
   selectionMouthOpen = mouthOpen;
 
       // shield: rising edge detection (start shield only when mouth opens newly and shield depleted)
-      if (mouthOpen && !wasMouthOpen && !shieldActive && shieldTimeLeft <= 0) {
+      // ignore mouth-triggered shields for a short grace period after reset or respawn
+      const sinceReset = performance.now() - lastResetTime;
+      if (mouthOpen && !wasMouthOpen && !shieldActive && shieldTimeLeft <= 0 && sinceReset > RESET_GRACE_MS) {
         shieldActive = true;
         shieldTimeLeft = SHIELD_DURATION;
         action = "🛡️ Shield Up!";
@@ -805,6 +813,10 @@ function spawnPowerUpAt(x, type = 'star') {
 }
 
 function checkPowerUpPickup() {
+  // ignore pickups immediately after a reset to avoid accidental collection during selection
+  const sinceReset = performance.now() - lastResetTime;
+  const ignorePickups = sinceReset <= RESET_GRACE_MS;
+
   for (const p of powerUps) {
     if (p.collected) continue;
     if (
@@ -813,6 +825,12 @@ function checkPowerUpPickup() {
       player.y < p.y + p.h &&
       player.y + player.h > p.y
     ) {
+      if (ignorePickups) {
+        // skip processing pickups that happen within the reset grace window
+        console.log('[powerup] pickup ignored due to reset grace', p.type);
+        p.collected = false; // keep it available
+        continue;
+      }
       // pick up
       p.collected = true;
       // handle pickups by type
