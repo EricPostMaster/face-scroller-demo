@@ -52,9 +52,10 @@ const INDICATOR_BASELINE_Y = 40; // fixed baseline Y (px from top)
 const INDICATOR_SCALE = 300; // scale factor for mapping nose delta to visual - tweak if needed
 const JUMP_NOSE_THRESHOLD = 0.02; // noseRise threshold used for jump (positive = nose moved up relative to baseline)
 
-// Sprite-sheet configuration (updated): 20x32 frames, 1 row, 4 columns; walk animation on row 0
+// Sprite-sheet configuration: defaults and per-character metadata
 const SPRITE_PATH = 'assets/walk.png';
-const SPRITE_FRAME_W = 20;
+// Default frame size for sprite sheets (fallback if a character doesn't provide dimensions)
+const SPRITE_FRAME_W = 20; // legacy default (20x32)
 const SPRITE_FRAME_H = 32;
 const SPRITE_COLS = 4;
 const SPRITE_ROWS = 1;
@@ -131,16 +132,21 @@ async function init() {
   canvas = document.getElementById("gameCanvas");
   ctx = canvas.getContext("2d");
 
-  // start loading player sprite sheet early
-  // load both character sprites from assets directories if present
+  // start loading player sprite sheets early
+  // support per-character frame sizes so we can have both legacy 20x32 sprites and 48x48 sprites
   window.playerSprites = [];
-  const charPaths = ['assets/character_1/walk.png', 'assets/character_2/walk.png'];
-  for (const p of charPaths) {
+  const CHARACTERS = [
+    { path: 'assets/character_1/walk.png', frameW: 20, frameH: 32 },
+    { path: 'assets/character_2/walk.png', frameW: 20, frameH: 32 },
+    { path: 'assets/llama/walk.png', frameW: 40, frameH: 40 }
+  ];
+  for (const c of CHARACTERS) {
     // load each and push result (may be null on error)
-    // load in parallel but allow continued init
-    loadPlayerSprite(p, SPRITE_FRAME_W, SPRITE_FRAME_H).then(s => {
+    // pass per-character frame width/height so the loader slices the sheet correctly
+    loadPlayerSprite(c.path, c.frameW || SPRITE_FRAME_W, c.frameH || SPRITE_FRAME_H).then(s => {
+      if (s) s.meta = { path: c.path, frameW: c.frameW, frameH: c.frameH };
       window.playerSprites.push(s);
-      console.log('[assets] loaded character sprite', p, !!s);
+      console.log('[assets] loaded character sprite', c.path, !!s);
     });
   }
 
@@ -509,9 +515,14 @@ function gameLoop(timestamp) {
   if (selectionActive && typeof selectionDotX === 'number') {
     const choiceY = canvas.height / 2 - 10;
     const spacing = 120;
-    const cxBase = canvas.width / 2 - spacing / 2;
-    for (let i = 0; i < 2; i++) {
-      const sx = cxBase + i * spacing;
+    // determine how many choices to check: character selection uses number of loaded sprites; post-death uses 2 options
+    let numChoices = (window.playerSprites && window.playerSprites.length) ? window.playerSprites.length : 2;
+    if (selectionMode === 'postDeath') numChoices = 2;
+    // center the choice cards horizontally based on the count
+    const totalWidth = spacing * (numChoices - 1);
+    const startX = canvas.width / 2 - totalWidth / 2;
+    for (let i = 0; i < numChoices; i++) {
+      const sx = startX + i * spacing;
       const rect = { x: sx - 40, y: choiceY - 40, w: 80, h: 100 };
       if (selectionDotX >= rect.x && selectionDotX <= rect.x + rect.w && selectionDotY >= rect.y && selectionDotY <= rect.y + rect.h) {
         hoverIndex = i;
