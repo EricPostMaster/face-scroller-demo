@@ -7,7 +7,7 @@ import { loadScores, renderScores, commitName, resetScores, checkHighScore } fro
 // Config constants //
 //////////////////////
 const PLAYER_W = 20;
-const PLAYER_H = 20;
+const PLAYER_H = 32; // match skeleton obstacle height (20x32) so player and skeletons are comparable
 const GRAVITY = 0.6;
 const JUMP_FORCE = -10;
 const SCROLL_SPEED = 2.5;
@@ -52,6 +52,18 @@ const INDICATOR_BASELINE_Y = 40; // fixed baseline Y (px from top)
 const INDICATOR_SCALE = 300; // scale factor for mapping nose delta to visual - tweak if needed
 const JUMP_NOSE_THRESHOLD = 0.02; // noseRise threshold used for jump (positive = nose moved up relative to baseline)
 
+// Sprite-sheet configuration (updated): 20x32 frames, 1 row, 4 columns; walk animation on row 0
+const SPRITE_PATH = 'assets/walk.png';
+const SPRITE_FRAME_W = 20;
+const SPRITE_FRAME_H = 32;
+const SPRITE_COLS = 4;
+const SPRITE_ROWS = 1;
+const SPRITE_WALK_ROW = 0; // walk frames on the single row
+const SPRITE_WALK_FRAMES = 4; // frames across the walk row
+const SPRITE_FPS = 12; // default frames per second for sprite animation
+// which direction the sprite sheet frames face by default (if 'left', the frames are drawn facing left)
+const SPRITE_SHEET_DEFAULT_FACING = 'right'; // this sheet faces right
+
 //////////////////////
 // State variables  //
 //////////////////////
@@ -64,6 +76,22 @@ let debugInvincible = false;
 
 let canvas, ctx;
 let player, ground, obstacles, gaps, score, gameOver, lastFrameTime;
+// selection state
+let playerChosen = false;
+let chosenCharacterIndex = null;
+let selectionDotX = 0;
+let selectionDotY = 0;
+let selectionMouthOpen = false;
+const NOSE_MIRROR = true; // mirror nose X so webcam feels like a mirror
+// selection hover timing
+let selectionHoverIndex = null;
+let selectionHoverStart = null; // timestamp in ms when mouth-open began while hovering
+const SELECTION_HOLD_MS = 1000; // require 1 second mouth-open to confirm
+// selection UI modes: when true show selection UI. mode: 'character' or 'postDeath'
+let selectionActive = true;
+let selectionMode = 'character';
+// when showing post-death choices, labels default to these
+const POST_DEATH_LABELS = ['Run Again', 'Start Over'];
 let shieldActive = false;
 let shieldTimeLeft = 0;
 // generic power-up state (for star invincibility)
@@ -98,6 +126,19 @@ async function init() {
   console.log('[game] init start');
   canvas = document.getElementById("gameCanvas");
   ctx = canvas.getContext("2d");
+
+  // start loading player sprite sheet early
+  // load both character sprites from assets directories if present
+  window.playerSprites = [];
+  const charPaths = ['assets/character_1/walk.png', 'assets/character_2/walk.png'];
+  for (const p of charPaths) {
+    // load each and push result (may be null on error)
+    // load in parallel but allow continued init
+    loadPlayerSprite(p, SPRITE_FRAME_W, SPRITE_FRAME_H).then(s => {
+      window.playerSprites.push(s);
+      console.log('[assets] loaded character sprite', p, !!s);
+    });
+  }
 
   // store internal resolution to draw at fixed logical size while CSS-resizing for responsiveness
   const LOGICAL_WIDTH = 400;
@@ -181,11 +222,112 @@ async function init() {
   requestAnimationFrame(gameLoop);
 }
 
+// Global selection hook called by draw module when mouth-open selection detected
+window.__selectPlayer = function(idx) {
+  // only allow selecting a player in character selection mode
+  if (playerChosen || !selectionActive || selectionMode !== 'character') return;
+  console.log('[select] player', idx);
+  chosenCharacterIndex = idx;
+  playerChosen = true;
+  selectionActive = false;
+  // attach selected sprite to player
+  if (window.playerSprites && window.playerSprites[idx]) {
+    player.sprite = window.playerSprites[idx];
+  }
+  // reset game state to begin proper game
+  resetGame();
+};
+
+// Post-death choice handler: 0 => Run Again (same character), 1 => Start Over (go to character selection)
+window.__postDeathChoice = function(idx) {
+  if (!selectionActive || selectionMode !== 'postDeath') return;
+  console.log('[postDeath] choice', idx);
+  if (idx === 0) {
+    // Run Again: keep chosenCharacterIndex, restart game
+    selectionActive = false;
+    selectionMode = 'character';
+    resetGame();
+    detectLoop();
+    requestAnimationFrame(gameLoop);
+  } else if (idx === 1) {
+    // Start Over: clear chosen player and go back to character selection
+    playerChosen = false;
+    chosenCharacterIndex = null;
+    selectionActive = true;
+    selectionMode = 'character';
+    // leave detectLoop running; gameLoop will draw selection screen
+  }
+  // reset hover state
+  selectionHoverIndex = null;
+  selectionHoverStart = null;
+};
+
+// Helper: load sprite and return metadata
+function loadPlayerSprite(path, frameW, frameH) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const cols = Math.floor(img.naturalWidth / frameW);
+      const rows = Math.floor(img.naturalHeight / frameH);
+      // create an offscreen canvas to inspect pixel data for each frame
+      const oc = document.createElement('canvas');
+      oc.width = img.naturalWidth;
+      oc.height = img.naturalHeight;
+      const octx = oc.getContext('2d');
+      octx.drawImage(img, 0, 0);
+
+      const frameBoxes = new Array(cols * rows);
+      for (let ry = 0; ry < rows; ry++) {
+        for (let cx = 0; cx < cols; cx++) {
+          const fx = cx * frameW;
+          const fy = ry * frameH;
+          const data = octx.getImageData(fx, fy, frameW, frameH).data;
+          let minX = frameW, minY = frameH, maxX = -1, maxY = -1;
+          for (let py = 0; py < frameH; py++) {
+            for (let px = 0; px < frameW; px++) {
+              const idx = (py * frameW + px) * 4;
+              const alpha = data[idx + 3];
+              if (alpha > 10) {
+                if (px < minX) minX = px;
+                if (py < minY) minY = py;
+                if (px > maxX) maxX = px;
+                if (py > maxY) maxY = py;
+              }
+            }
+          }
+          const frameIndex = ry * cols + cx;
+          if (maxX >= 0) {
+            const contentCenterX = (minX + maxX) / 2;
+            const contentBottomY = maxY;
+            frameBoxes[frameIndex] = { minX, minY, maxX, maxY, contentCenterX, contentBottomY };
+          } else {
+            // empty frame: default values
+            frameBoxes[frameIndex] = { minX: 0, minY: 0, maxX: frameW - 1, maxY: frameH - 1, contentCenterX: frameW / 2, contentBottomY: frameH - 1 };
+          }
+        }
+      }
+
+      // attach default facing info and per-frame boxes for alignment
+      resolve({ image: img, frameW, frameH, cols, rows, width: img.naturalWidth, height: img.naturalHeight, defaultFacing: SPRITE_SHEET_DEFAULT_FACING, frameBoxes });
+    };
+    img.onerror = () => resolve(null);
+    img.src = path;
+  });
+}
+
 //////////////////////
 // Reset / TryAgain //
 //////////////////////
 function resetGame() {
-  player = { x: 50, y: 240, w: PLAYER_W, h: PLAYER_H, vy: 0, onGround: true };
+  player = { x: 50, y: 240, w: PLAYER_W, h: PLAYER_H, vy: 0, onGround: true, stepPhase: 0 };
+  // attach sprite metadata if loaded
+  // default player sprite is first loaded character if selection already made
+  if (playerChosen && typeof chosenCharacterIndex === 'number' && window.playerSprites[chosenCharacterIndex]) {
+    player.sprite = window.playerSprites[chosenCharacterIndex];
+  } else {
+    player.sprite = window.playerSprites[0] || null;
+  }
+  player.facing = 'right';
   // recompute ground using logical canvas height
   ground = canvas.height - 40;
   obstacles = [];
@@ -249,6 +391,15 @@ async function detectLoop() {
       // visual nose offset mapping: map noseRise (small decimals) to a visual px offset
       noseVisualOffset = -noseRise * INDICATOR_SCALE; // negative because rise -> move up visually
 
+  // update selection dot position (map normalized nose coords to canvas)
+  // nose.x is normalized 0..1 (left=0 right=1) relative to camera; convert to canvas coords
+  const nx = NOSE_MIRROR ? (1 - nose.x) : nose.x;
+  selectionDotX = nx * canvas.width;
+  selectionDotY = nose.y * canvas.height;
+
+  // mouth open detection for selection
+  selectionMouthOpen = mouthOpen;
+
       // shield: rising edge detection (start shield only when mouth opens newly and shield depleted)
       if (mouthOpen && !wasMouthOpen && !shieldActive && shieldTimeLeft <= 0) {
         shieldActive = true;
@@ -283,7 +434,8 @@ async function detectLoop() {
     console.warn("detectLoop error", err);
   }
 
-  if (!gameOver) requestAnimationFrame(detectLoop);
+  // keep detectLoop running while the game is running OR while selection UI is active
+  if (!gameOver || selectionActive) requestAnimationFrame(detectLoop);
 }
 
 function doJump() {
@@ -336,19 +488,88 @@ function gameLoop(timestamp) {
   const delta = (timestamp - lastFrameTime) / 1000;
   lastFrameTime = timestamp;
 
+  // If the game is still running, update the game state.
   if (!gameOver) {
     updateGame(delta);
-    drawGame({
-      ctx, canvas, ground, gaps, obstacles, powerUps, beams, particles, player,
-      powerUpActive, powerUpTimeLeft, POWERUP_DURATION,
-      shieldActive, shieldTimeLeft, SHIELD_DURATION,
-      wingsActive, shoeActive, redCrossActive,
-      noseVisualOffset, INDICATOR_BASELINE_Y, INDICATOR_SCALE,
-      JUMP_NOSE_THRESHOLD, RAINBOW_HUE_SPEED, RAINBOW_PULSE_SPEED,
-      score
-    });
-    requestAnimationFrame(gameLoop);
   }
+
+  // --- Selection hover timing logic (require sustained mouth-open to confirm) ---
+  // Determine if the nose dot is over one of the choice cards and update hover timers.
+  let hoverIndex = null;
+  let hoverProgress = 0;
+  // run hover detection when selection UI is active (either initial selection or post-death)
+  if (selectionActive && typeof selectionDotX === 'number') {
+    const choiceY = canvas.height / 2 - 10;
+    const spacing = 120;
+    const cxBase = canvas.width / 2 - spacing / 2;
+    for (let i = 0; i < 2; i++) {
+      const sx = cxBase + i * spacing;
+      const rect = { x: sx - 40, y: choiceY - 40, w: 80, h: 100 };
+      if (selectionDotX >= rect.x && selectionDotX <= rect.x + rect.w && selectionDotY >= rect.y && selectionDotY <= rect.y + rect.h) {
+        hoverIndex = i;
+        break;
+      }
+    }
+
+    const now = performance.now();
+    if (hoverIndex !== null && selectionMouthOpen) {
+      // start or continue the hover timer for this index
+      if (selectionHoverIndex === hoverIndex) {
+        if (!selectionHoverStart) selectionHoverStart = now;
+      } else {
+        selectionHoverIndex = hoverIndex;
+        selectionHoverStart = now;
+      }
+      hoverProgress = Math.min(1, (now - (selectionHoverStart || now)) / SELECTION_HOLD_MS);
+
+      // confirm selection if held long enough
+      if (hoverProgress >= 1) {
+        if (selectionMode === 'character') {
+          if (window && typeof window.__selectPlayer === 'function') window.__selectPlayer(hoverIndex);
+        } else if (selectionMode === 'postDeath') {
+          if (window && typeof window.__postDeathChoice === 'function') window.__postDeathChoice(hoverIndex);
+        }
+        // reset hover state so it doesn't immediately re-trigger
+        selectionHoverIndex = null;
+        selectionHoverStart = null;
+        hoverProgress = 0;
+      }
+    } else {
+      // not hovering with mouth open -> reset hover timer
+      selectionHoverIndex = null;
+      selectionHoverStart = null;
+      hoverProgress = 0;
+    }
+  }
+
+  // Draw the current scene or selection UI
+  drawGame({
+    ctx, canvas, ground, gaps, obstacles, powerUps, beams, particles, player,
+    powerUpActive, powerUpTimeLeft, POWERUP_DURATION,
+    shieldActive, shieldTimeLeft, SHIELD_DURATION,
+    wingsActive, shoeActive, redCrossActive,
+    noseVisualOffset, INDICATOR_BASELINE_Y, INDICATOR_SCALE,
+    JUMP_NOSE_THRESHOLD, RAINBOW_HUE_SPEED, RAINBOW_PULSE_SPEED,
+    // pass the player's stepPhase so the renderer can animate walking
+    stepPhase: player.stepPhase,
+    // selection UI state (include hover progress)
+    selection: {
+      active: selectionActive,
+      mode: selectionMode,
+      dotX: selectionDotX,
+      dotY: selectionDotY,
+      mouthOpen: selectionMouthOpen,
+      sprites: window.playerSprites || [],
+      hoverIndex: selectionHoverIndex,
+      hoverProgress: (typeof hoverProgress === 'number') ? hoverProgress : 0,
+      postDeathLabels: POST_DEATH_LABELS,
+      postDeathEmojis: ['🏃‍➡️', '🔁']
+    },
+    score
+  });
+
+  // continue the main loop while the game is running or the selection UI is active
+  if (!gameOver || selectionActive) requestAnimationFrame(gameLoop);
 }
 
 function updateGame(dt) {
@@ -439,6 +660,10 @@ function updateGame(dt) {
   // stronger phase advance so walking is visible; ties to scroll speed
   const phaseAdvance = (SCROLL_SPEED / 60) * 100 * dt; // larger multiplier -> faster visible walk
   obstacles.forEach(o => { if (typeof o.phase === 'number') o.phase += phaseAdvance; });
+
+  // advance player step phase for walking animation; tie to scroll speed so legs move when level moves
+  // stepPhase is in seconds-like units; increase multiplier so walking looks faster
+  player.stepPhase += (SCROLL_SPEED / 60) * 14 * dt;
 
   // check for star pickups after moving power-ups
   checkPowerUpPickup();
@@ -657,6 +882,11 @@ function triggerGameOver() {
   document.getElementById("tryAgain").style.display = "inline-block";
   // check scoreboard entry
   checkHighScore(Math.floor(score));
+  // show post-death selection screen so player can Run Again or Start Over
+  selectionActive = true;
+  selectionMode = 'postDeath';
+  // ensure detectLoop keeps running so the nose cursor updates while on the selection screen
+  detectLoop();
 }
 
 
