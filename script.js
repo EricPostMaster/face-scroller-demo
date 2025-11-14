@@ -92,6 +92,18 @@ const NOSE_MIRROR = true; // mirror nose X so webcam feels like a mirror
 let selectionHoverIndex = null;
 let selectionHoverStart = null; // timestamp in ms when mouth-open began while hovering
 const SELECTION_HOLD_MS = 1000; // require 1 second mouth-open to confirm
+// allow small brief mouth-closed blips so hover progress isn't too fragile
+const MOUTH_CLOSED_TOL_MS = 220; // ms
+let selectionMouthClosedSince = 0; // timestamp when mouth was seen closed during hover
+// debugging helpers
+let selectionIgnoreUntil = 0;
+const selectionDebug = {
+  hoverProgress: 0,
+  hoverIndex: null,
+  hoverStart: 0,
+  closedSince: 0,
+  lastResetReason: null
+};
 // selection UI modes: when true show selection UI. mode: 'character' or 'postDeath'
 let selectionActive = true;
 let selectionMode = 'character';
@@ -119,6 +131,12 @@ let redCrossActive = false;
 let redCrossTimeLeft = 0;
 let powerUps = [];
 let action = "😐 Idle";
+
+// Death / post-death timing (ms)
+const DEATH_DELAY_MS = 1500; // 1.5 seconds delay before showing post-death UI
+const DEATH_FADE_MS = 250; // 0.25s fade for post-death screen
+let deathStartTime = 0; // timestamp when game over was triggered
+let tryAgainShownAfterFade = false;
 
 // For visual nose dot
 let lastNoseY = null;
@@ -263,9 +281,22 @@ window.__postDeathChoice = function(idx) {
     // Start Over: clear chosen player and go back to character selection
     playerChosen = false;
     chosenCharacterIndex = null;
+    // Immediately show the character selection UI, but set a short ignore window
+    // so the user's nose/mouth don't accidentally re-confirm the previously-hovered card.
+    const now = performance.now();
+    lastResetTime = now; // keep pickup-ignoring behavior
+    selectionIgnoreUntil = now + 800; // ignore hover input for 800ms
+    // clear death timing so the post-death fade logic won't later flip the UI
+    deathStartTime = 0;
+    tryAgainShownAfterFade = false;
+    // hide the Try Again HTML control and show character selection immediately
+    try { document.getElementById("tryAgain").style.display = "none"; } catch (e) {}
     selectionActive = true;
     selectionMode = 'character';
-    // leave detectLoop running; gameLoop will draw selection screen
+    // ensure detection and draw loops are running so the selection UI is painted
+    detectLoop();
+    try { requestAnimationFrame(gameLoop); } catch (e) { /* noop if not available */ }
+    // leave detectLoop running; gameLoop will draw selection screen after the brief pause
   }
   // reset hover state
   selectionHoverIndex = null;
@@ -365,6 +396,9 @@ function resetGame() {
   document.getElementById("debug").innerHTML = "Debug info will appear here";
   // record reset time so we can ignore immediate mouth triggers / accidental pickups
   lastResetTime = performance.now();
+  // reset death timing
+  deathStartTime = 0;
+  tryAgainShownAfterFade = false;
 }
 
 // Ensure Try Again restarts detection & game loops
@@ -449,7 +483,15 @@ async function detectLoop() {
   }
 
   // keep detectLoop running while the game is running OR while selection UI is active
-  if (!gameOver || selectionActive) requestAnimationFrame(detectLoop);
+  // Also keep running during the death delay + fade so the nose cursor updates while the UI appears
+  let keepDetectRunning = false;
+  if (!gameOver) keepDetectRunning = true;
+  else if (selectionActive) keepDetectRunning = true;
+  else if (gameOver && deathStartTime) {
+    const elapsed = performance.now() - deathStartTime;
+    if (elapsed < (DEATH_DELAY_MS + DEATH_FADE_MS)) keepDetectRunning = true;
+  }
+  if (keepDetectRunning) requestAnimationFrame(detectLoop);
 }
 
 function doJump() {
@@ -531,8 +573,25 @@ function gameLoop(timestamp) {
     }
 
     const now = performance.now();
-    if (hoverIndex !== null && selectionMouthOpen) {
+    // expose some debug state
+    selectionDebug.hoverIndex = hoverIndex;
+    selectionDebug.hoverStart = selectionHoverStart || 0;
+    selectionDebug.closedSince = selectionMouthClosedSince || 0;
+    selectionDebug.ignoreUntil = selectionIgnoreUntil || 0;
+
+    // ignore hover input entirely while we're inside an explicit ignore window
+    if (now < (selectionIgnoreUntil || 0)) {
+      // still in ignore window: clear any hover progress and skip selection checks
+      selectionHoverIndex = null;
+      selectionHoverStart = null;
+      selectionMouthClosedSince = 0;
+      selectionDebug.lastResetReason = 'ignoreGuard';
+      hoverIndex = null;
+      hoverProgress = 0;
+    } else if (hoverIndex !== null && selectionMouthOpen) {
       // start or continue the hover timer for this index
+      // clear any closed-since timer
+      selectionMouthClosedSince = 0;
       if (selectionHoverIndex === hoverIndex) {
         if (!selectionHoverStart) selectionHoverStart = now;
       } else {
@@ -540,6 +599,7 @@ function gameLoop(timestamp) {
         selectionHoverStart = now;
       }
       hoverProgress = Math.min(1, (now - (selectionHoverStart || now)) / SELECTION_HOLD_MS);
+      selectionDebug.hoverProgress = hoverProgress;
 
       // confirm selection if held long enough
       if (hoverProgress >= 1) {
@@ -548,20 +608,68 @@ function gameLoop(timestamp) {
         } else if (selectionMode === 'postDeath') {
           if (window && typeof window.__postDeathChoice === 'function') window.__postDeathChoice(hoverIndex);
         }
-        // reset hover state so it doesn't immediately re-trigger
-        selectionHoverIndex = null;
-        selectionHoverStart = null;
-        hoverProgress = 0;
+  // reset hover state so it doesn't immediately re-trigger
+  console.log('[select] confirmed', { mode: selectionMode, index: hoverIndex, now });
+  selectionHoverIndex = null;
+  selectionHoverStart = null;
+  selectionMouthClosedSince = 0;
+  selectionDebug.lastResetReason = `confirmed:${selectionMode}:${hoverIndex}`;
+  hoverProgress = 0;
       }
     } else {
-      // not hovering with mouth open -> reset hover timer
-      selectionHoverIndex = null;
-      selectionHoverStart = null;
-      hoverProgress = 0;
+      // not hovering with mouth open -> allow a short tolerance before fully resetting
+      if (hoverIndex !== null) {
+        // if we were hovering and just saw mouth closed, start/continue closed timer
+        if (!selectionMouthClosedSince) selectionMouthClosedSince = now;
+        const closedFor = now - selectionMouthClosedSince;
+        if (closedFor < MOUTH_CLOSED_TOL_MS) {
+          // keep hover progress but don't increase it
+          hoverProgress = Math.min(1, (now - (selectionHoverStart || now)) / SELECTION_HOLD_MS);
+          selectionDebug.hoverProgress = hoverProgress;
+        } else {
+          // closed for too long -> reset
+          console.log('[select] reset due to mouth closed', { closedFor, now });
+          selectionHoverIndex = null;
+          selectionHoverStart = null;
+          selectionMouthClosedSince = 0;
+          selectionDebug.lastResetReason = `mouthClosed:${Math.round(closedFor)}`;
+          hoverProgress = 0;
+        }
+      } else {
+        // not hovering at all -> clear
+        selectionHoverIndex = null;
+        selectionHoverStart = null;
+        selectionMouthClosedSince = 0;
+        selectionDebug.lastResetReason = 'notHovering';
+        hoverProgress = 0;
+      }
     }
   }
 
   // Draw the current scene or selection UI
+  // compute death/post-death timing and selection fade
+  let selectionFadeAlpha = 1; // default fully visible
+  if (gameOver && deathStartTime) {
+    const elapsed = performance.now() - deathStartTime;
+    if (elapsed < DEATH_DELAY_MS) {
+      // still in death delay period - show red X overlay via draw module; keep selection inactive
+      selectionActive = false;
+      selectionMode = null;
+      selectionFadeAlpha = 0;
+    } else {
+      // after delay, enable post-death selection and compute fade progress
+      selectionActive = true;
+      selectionMode = 'postDeath';
+      const fadeElapsed = Math.min(DEATH_FADE_MS, elapsed - DEATH_DELAY_MS);
+      selectionFadeAlpha = Math.min(1, fadeElapsed / DEATH_FADE_MS);
+      // only show Try Again button after full fade-in complete
+      if (!tryAgainShownAfterFade && elapsed >= DEATH_DELAY_MS + DEATH_FADE_MS) {
+        document.getElementById("tryAgain").style.display = "inline-block";
+        tryAgainShownAfterFade = true;
+      }
+    }
+  }
+
   drawGame({
     ctx, canvas, ground, gaps, obstacles, powerUps, beams, particles, player,
     powerUpActive, powerUpTimeLeft, POWERUP_DURATION,
@@ -575,6 +683,7 @@ function gameLoop(timestamp) {
     selection: {
       active: selectionActive,
       mode: selectionMode,
+      fadeAlpha: selectionFadeAlpha,
       dotX: selectionDotX,
       dotY: selectionDotY,
       mouthOpen: selectionMouthOpen,
@@ -587,8 +696,31 @@ function gameLoop(timestamp) {
     score
   });
 
+  // show selection debug in the debug panel for easier tracing
+  const dbgEl = document.getElementById('debug');
+  if (dbgEl) {
+    const extra = `
+      <hr>
+      HoverIndex: ${selectionDebug.hoverIndex}<br>
+      HoverProgress: ${(selectionDebug.hoverProgress*100).toFixed(0)}%<br>
+      HoverStart: ${Math.round(selectionDebug.hoverStart)}<br>
+      ClosedSince: ${Math.round(selectionDebug.closedSince)}<br>
+      IgnoreUntil: ${Math.round(selectionDebug.ignoreUntil)}<br>
+      LastReset: ${selectionDebug.lastResetReason}
+    `;
+    dbgEl.innerHTML = dbgEl.innerHTML + extra;
+  }
+
   // continue the main loop while the game is running or the selection UI is active
-  if (!gameOver || selectionActive) requestAnimationFrame(gameLoop);
+  // Also keep running while we're in the death delay + fade period so the red X can show
+  let keepRunning = false;
+  if (!gameOver) keepRunning = true;
+  else if (selectionActive) keepRunning = true;
+  else if (gameOver && deathStartTime) {
+    const elapsed = performance.now() - deathStartTime;
+    if (elapsed < (DEATH_DELAY_MS + DEATH_FADE_MS)) keepRunning = true;
+  }
+  if (keepRunning) requestAnimationFrame(gameLoop);
 }
 
 function updateGame(dt) {
@@ -906,15 +1038,15 @@ function startObstacleBreak(o) {
 
 
 function triggerGameOver() {
+  // mark game over and start death timer; actual post-death UI will appear after a short delay
   gameOver = true;
   document.getElementById("status").textContent = `💀 Game Over! Score: ${Math.floor(score)}`;
-  document.getElementById("tryAgain").style.display = "inline-block";
-  // check scoreboard entry
+  // record when death occurred so we can show red X and then fade in UI
+  deathStartTime = performance.now();
+  tryAgainShownAfterFade = false;
+  // check scoreboard entry immediately (so score is recorded)
   checkHighScore(Math.floor(score));
-  // show post-death selection screen so player can Run Again or Start Over
-  selectionActive = true;
-  selectionMode = 'postDeath';
-  // ensure detectLoop keeps running so the nose cursor updates while on the selection screen
+  // keep detectLoop running so the nose cursor updates while waiting / on selection screen
   detectLoop();
 }
 
