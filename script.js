@@ -9,7 +9,7 @@ import { loadScores, renderScores, commitName, resetScores, checkHighScore } fro
 const PLAYER_W = 20;
 const PLAYER_H = 32; // match skeleton obstacle height (20x32) so player and skeletons are comparable
 const GRAVITY = 0.6;
-const JUMP_FORCE = -10;
+const JUMP_FORCE = -13;
 const SCROLL_SPEED = 1.0;
 const SHIELD_DURATION = 3.0; // seconds
 const POWERUP_DURATION = 5.0; // seconds for star (invincibility)
